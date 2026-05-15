@@ -236,9 +236,19 @@ function _getSymbols() {
   return _symFetch;
 }
 
+// ── Symbol scoring (P8C.3) ────────────────────────────────────────────────────
+function _symbolScore(symbol, q) {
+  if (symbol === q || symbol === `${q}USDT`) return 0;
+  if (symbol.startsWith(q)) return 1;
+  if (symbol.includes(q)) return 2;
+  return 3;
+}
+
 // ── Fastify ────────────────────────────────────────────────────────────────────
 export async function startAdminApi() {
   const app = Fastify({ logger: false });
+
+  _getSymbols().catch(() => {});
 
   app.addHook('onRequest', (req, reply, done) => {
     reply.header('Access-Control-Allow-Origin',  '*');
@@ -276,12 +286,8 @@ export async function startAdminApi() {
       const all  = await _getSymbols();
       const hits = all
         .filter(s => s.includes(q))
-        .sort((a, b) => {
-          const aS = a.startsWith(q), bS = b.startsWith(q);
-          if (aS !== bS) return aS ? -1 : 1;
-          return a.localeCompare(b);
-        })
-        .slice(0, 30);
+        .sort((a, b) => _symbolScore(a, q) - _symbolScore(b, q) || a.localeCompare(b))
+        .slice(0, 50);
       return { symbols: hits };
     } catch { return { symbols: [] }; }
   });
