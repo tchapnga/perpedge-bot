@@ -1,0 +1,52 @@
+# Dépendances
+node_modules/
+mini-app/node_modules/
+
+# Variables d'environnement — JAMAIS dans git
+.env
+.env.local
+.env.production
+.env.backup*
+.deploy.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Build mini-app
+mini-app/dist/
+
+# Données runtime
+trade_journal.jsonl
+signals_queue.jsonl
+admin_audit.jsonl
+feedback_report.jsonl
+*.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Charts temporaires
+charts/
+*.png
+
+# PM2
+.pm2/
+
+# Playwright cache
+.playwright-mcp/
+
+# Fichiers temporaires LLM sessions
+chatgpt-*.yml
+chatgpt-*.txt
+gemini-*.yml
+gemini-*.txt
+deepseek-*.txt
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Claude Code settings locaux
+.claude/settings.local.json

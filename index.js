@@ -1,0 +1,274 @@
+import cron from 'node-cron';
+import { config } from './src/config.js';
+import { runPhase1 } from './src/scanner.js';
+import { runAnalysis } from './src/scorer.js';
+import { buildCombinedMessage, sendTelegram, sendTelegramPhoto } from './src/notifier.js';
+import { captureChart, cleanChart } from './src/chart-capture.js';
+import { injectSignal, computeLevels } from './src/injector.js';
+import { executeOrder } from './src/order-executor.js';
+import { registerTrade, startPositionManager, getTrackedPositions } from './src/position-manager.js';
+import { startDashboard } from './src/dashboard.js';
+import { runSqueezeWatch } from './src/squeeze-watcher.js';
+import { startOiWatcher } from './src/oi-watcher.js';
+import { startCrowdedUnwindWatcher } from './src/crowded-unwind-watcher.js';
+import { startCapitulationWatcher } from './src/capitulation-watcher.js';
+import { validateSignal } from './src/llm-validator.js';
+import { startFeedbackAnalyzer } from './src/feedback-analyzer.js';
+import { startFeedbackApplier } from './src/feedback-applier.js';
+import { startSmartMoneyScanner } from './src/smart-money-scanner.js';
+import { startSpotDCAManager } from './src/spot-dca-manager.js';
+import { startScalpScanner } from './src/scalp-scanner.js';
+import { scoreScalp } from './src/scalp-scorer.js';
+import { registerScalpTrade, startScalpManager, getScalpPositions } from './src/scalp-manager.js';
+import { startAdminApi, injectAdminDeps } from './src/admin-api.js';
+import { startTelegramBot, injectBotDeps } from './src/telegram-bot.js';
+import { startDailyReporter }              from './src/daily-reporter.js';
+import { recordCycle, recordSignal, recordTrade, isPaused, isEmergencyStopped, getMode } from './src/bot-state.js';
+
+async function runCycle() {
+  if (isPaused() || isEmergencyStopped()) {
+    console.log('[cycle] PAUSED — cycle ignoré.');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  console.log(`\n[${now}] ── Cycle PerpEdge ──────────────────────`);
+  recordCycle();
+
+  // Phase 1 — scan (returns top 3 candidates)
+  let candidates;
+  try {
+    candidates = await runPhase1();
+  } catch (err) {
+    console.error('[phase1] Error:', err.message);
+    return;
+  }
+
+  if (!candidates.length) {
+    console.log('[phase1] NO_TRADE — aucun token ≥ 2 scans.');
+    return;
+  }
+
+  console.log(`[phase1] ${candidates.length} candidat(s): ${candidates.map(c => `${c.symbol}(${c.scan_count}${c.oi_exception ? '+OI💥' : ''})`).join(', ')}`);
+
+  // Phase 2+3 — TA + derivatives + scoring (parallel on all candidates)
+  const settled = await Promise.allSettled(
+    candidates.map(async (c) => {
+      const r = await runAnalysis(c.symbol, c.scans ?? []);
+      r.scan_count = c.scan_count;
+      r.scans      = c.scans;
+      return r;
+    })
+  );
+
+  const qualifying = [];
+  for (const [i, s] of settled.entries()) {
+    if (s.status !== 'fulfilled') {
+      console.error(`[analysis] ${candidates[i].symbol} Error:`, s.reason?.message);
+      continue;
+    }
+    const result = s.value;
+    console.log(`[result] ${result.signal} ${result.symbol} — ${result.total}/10 (TA: ${result.ta_score} | DER: ${result.der_score}) — ${result.force}`);
+    console.log(`  TA : ${result.ta_detail.join(' | ')}`);
+    console.log(`  DER: ${result.der_detail.join(' | ')}`);
+    if (result.rv_regime)   console.log(`  CTX: RV=${result.rv_regime} | MSB=${result.msb_direction ?? 'N/A'} | Basis=${result.basis_signal ?? 'N/A'} | BTCcorr=${result.btc_corr_macro != null ? result.btc_corr_macro.toFixed(2) : 'N/A'}`);
+    if (result.gate_block)  console.log(`  [GATE] BLOQUÉ — ${result.gate_reason}`);
+    if (result.veto_reason) console.log(`  [VETO] DER toxique — ${result.veto_reason}`);
+    if (result.reduce_size) console.log(`  [GATE] ⚠️ reduce_size_50pct (RV extreme)`);
+
+    if (result.signal !== 'NO_TRADE' && result.total >= config.minScore) {
+      if (isCoolingDown(result.symbol)) {
+        console.log(`[cooldown] ${result.symbol} — signal ignoré (déjà notifié il y a moins de 60min)`);
+      } else {
+        qualifying.push(result);
+      }
+    }
+  }
+
+  if (!qualifying.length) {
+    console.log('[notifier] NO_TRADE — pas de notification.');
+    return;
+  }
+
+  // LLM Validation — aucun signal sans consensus LLM
+  const llmValidated = [];
+  for (const result of qualifying) {
+    const v = await validateSignal(result);
+    if (v.decision === 'REJECT') {
+      console.log(`[llm-validator] REJECT ${result.symbol} — ${v.reasoning}`);
+      continue;
+    }
+    if (v.decision === 'PENDING') {
+      console.log(`[llm-validator] PENDING ${result.symbol} — signal ignoré (ordre limit recommandé)`);
+      continue;
+    }
+    if (v.decision === 'CONTRARIAN_FLIP') {
+      const flippedDir = result.direction === 'long' ? 'short' : 'long';
+      result.direction = flippedDir;
+      result.signal    = flippedDir === 'long' ? 'LONG' : 'SHORT';
+      result.llm_flip  = true;
+      console.log(`[llm-validator] CONTRARIAN_FLIP ${result.symbol} → ${result.signal} (${v.reasoning})`);
+    }
+    result.llm_validation = v;
+    llmValidated.push(result);
+  }
+
+  if (!llmValidated.length) {
+    console.log('[llm-validator] Tous les signaux rejetés/pending — pas de notification.');
+    return;
+  }
+
+  try {
+    await sendTelegram(buildCombinedMessage(llmValidated));
+    console.log(`[notifier] Notification envoyée (${llmValidated.length} signal(s)).`);
+    for (const result of llmValidated) { setCooldown(result.symbol); recordSignal(); }
+  } catch (err) {
+    console.error('[notifier] Error:', err.message);
+  }
+
+  // Charts Lightweight — EMA 21/50 + niveaux entry/SL/TP tracés, fail-open
+  for (const result of llmValidated) {
+    try {
+      const dir    = result.signal === 'MARKET_LONG' || result.signal === 'LONG' ? 'LONG' : 'SHORT';
+      const lvls   = computeLevels(result);
+      const levels = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
+      const caption = `📊 <b>${result.symbol}</b> · 1H · ${dir} · Score ${result.total}/10`;
+      const path   = await captureChart(result.symbol, '1h', levels);
+      if (path) {
+        await sendTelegramPhoto(path, caption);
+        await cleanChart(path);
+        console.log(`[chart-capture] Chart ${result.symbol} envoyé sur Telegram.`);
+      }
+    } catch (err) {
+      console.warn(`[chart-capture] ${result.symbol}: ${err.message}`);
+    }
+  }
+
+  for (const result of llmValidated) {
+    try { await injectSignal(result); }
+    catch (err) { console.error('[injector] Error:', err.message); }
+
+    logSignal(result);
+
+    if (getMode() === 'LIVE') {
+      try {
+        const levels = computeLevels(result);
+        const order  = await executeOrder({
+          symbol: result.symbol,
+          side:   result.signal,
+          entry:  levels.entry,
+          extra:  { reduce_size: result.reduce_size ?? false },
+        });
+        result.order_result = order;
+        if (order.success) {
+          recordTrade();
+          await registerTrade({
+            symbol: result.symbol,
+            side:   result.signal,
+            entry:  levels.entry,
+            sl:     levels.sl,
+            tp1:    levels.tp1,
+            tp2:    levels.tp2,
+            qty:    order.qty,
+          });
+        } else {
+          console.error(`[order-executor] Échec ${result.symbol}: ${order.error}`);
+        }
+      } catch (err) {
+        console.error(`[order-executor] Error ${result.symbol}:`, err.message);
+      }
+    } else {
+      console.log(`[order-executor] ${getMode()} — ordre simulé ${result.symbol} ${result.signal}`);
+    }
+  }
+}
+
+// Cooldown : évite de re-notifier le même symbole dans la fenêtre définie
+const SIGNAL_COOLDOWN_MS = 60 * 60_000; // 60 min
+const signalCooldowns = new Map();
+
+function isCoolingDown(symbol) {
+  const last = signalCooldowns.get(symbol);
+  return last && Date.now() - last < SIGNAL_COOLDOWN_MS;
+}
+function setCooldown(symbol) { signalCooldowns.set(symbol, Date.now()); }
+
+// Signal log pour le dashboard (max 50 entrées)
+const signalLog = [];
+function logSignal(result) {
+  signalLog.unshift({ time: new Date().toISOString(), symbol: result.symbol, signal: result.signal, total: result.total, llm_validation: result.llm_validation });
+  if (signalLog.length > 50) signalLog.length = 50;
+}
+
+console.log(`PerpEdge Bot démarré — schedule: "${config.cronSchedule}"`);
+cron.schedule(config.cronSchedule, runCycle);
+cron.schedule('*/5 * * * *', async () => {
+  try { await runSqueezeWatch(); }
+  catch (err) { console.error('[squeeze] Unhandled error:', err.message); }
+});
+
+// Stagger immediate startup to avoid thundering herd on API
+runCycle();
+setTimeout(() => startOiWatcher(),             3_000);
+setTimeout(() => runSqueezeWatch(),            5_000);
+setTimeout(() => startCrowdedUnwindWatcher(), 7_000);
+setTimeout(() => startPositionManager(),       9_000);
+setTimeout(() => startCapitulationWatcher(),                              11_000);
+setTimeout(() => startDashboard(() => getTrackedPositions(), () => signalLog), 13_000);
+startFeedbackAnalyzer();
+startFeedbackApplier();
+setTimeout(() => startSpotDCAManager(),    17_000);
+setTimeout(() => startSmartMoneyScanner(), 19_000);
+
+// Scalp module — cooldown per symbol to avoid double-entry
+const scalpCooldowns = new Map();
+const SCALP_COOLDOWN_MS = 5 * 60_000; // 5min
+
+setTimeout(() => {
+  startScalpScanner(async (candidate) => {
+    const last = scalpCooldowns.get(candidate.symbol);
+    if (last && Date.now() - last < SCALP_COOLDOWN_MS) return;
+
+    const scored = await scoreScalp(candidate).catch(() => null);
+    if (!scored || scored.signal === 'NO_TRADE' || scored.total < 5) return;
+
+    console.log(`[scalp] ${scored.signal} ${scored.symbol} ${scored.total}/10 — ${scored.detail.join(' | ')}`);
+    scalpCooldowns.set(scored.symbol, Date.now());
+
+    if (getMode() === 'LIVE') {
+      try {
+        const atr    = scored.ta?.tf_5m?.atr_14 ?? (scored.mark_price * 0.003);
+        const isLong = scored.side === 'LONG';
+        const sl     = isLong  ? scored.mark_price - atr : scored.mark_price + atr;
+        const tp     = isLong  ? scored.mark_price + 2 * atr : scored.mark_price - 2 * atr;
+        const order  = await executeOrder({
+          symbol: scored.symbol,
+          side:   scored.signal,
+          entry:  scored.mark_price,
+          extra:  { reduce_size: false },
+        });
+        if (order.success) {
+          registerScalpTrade({ symbol: scored.symbol, side: scored.signal, entry: scored.mark_price, sl, tp, qty: order.qty });
+        } else {
+          console.error(`[scalp] ordre échoué ${scored.symbol}: ${order.error}`);
+        }
+      } catch (err) {
+        console.error(`[scalp] executeOrder error ${scored.symbol}:`, err.message);
+      }
+    } else {
+      console.log(`[scalp] ${getMode()} — ordre simulé ${scored.symbol} ${scored.signal}`);
+    }
+  });
+  startScalpManager();
+}, 15_000);
+
+// Admin API + Telegram Bot — démarrage avec injection des getters partagés
+injectAdminDeps({
+  getPositions:    getTrackedPositions,
+  getSignalLog:    () => signalLog,
+  getScalpPositions: getScalpPositions,
+});
+injectBotDeps({ getPositions: getTrackedPositions, getSignalLog: () => signalLog });
+startAdminApi().catch(err => console.error('[admin-api] Erreur démarrage:', err.message));
+startTelegramBot();
+startDailyReporter();

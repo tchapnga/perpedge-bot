@@ -1,0 +1,5 @@
+# Scripts bash — LF obligatoire pour exécution Linux
+scripts/*.sh text eol=lf
+
+# Tous les autres fichiers texte — auto
+* text=auto
