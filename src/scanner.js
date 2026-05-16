@@ -3,6 +3,9 @@ import { scan } from './perp-client.js';
 const MAX_CANDIDATES       = 3;
 const OI_EXPLOSION_MIN_PCT = 30; // Exception ADR-5.3 : bypass ≥2 scans si OI >30%
 
+// Tokens blacklistés — HTTP 500 persistant sur ta-analysis (retirer si perp-mcp corrige)
+const SYMBOL_BLACKLIST = new Set(['STARUSDT']);
+
 // Adapters par format de réponse — chaque scanner a sa structure propre
 function normalizeFundingExtremes(data) {
   return [
@@ -80,7 +83,7 @@ export async function runPhase1() {
 
   const allSymbols = new Set([...Object.keys(counts), ...oiExplosion]);
   const candidates = [...allSymbols]
-    .filter(sym => counts[sym] >= 2 || oiExplosion.has(sym))
+    .filter(sym => (counts[sym] >= 2 || oiExplosion.has(sym)) && !SYMBOL_BLACKLIST.has(sym))
     .sort((a, b) => {
       const aOi = oiExplosion.has(a) && (counts[a] ?? 0) < 2 ? 1 : 0;
       const bOi = oiExplosion.has(b) && (counts[b] ?? 0) < 2 ? 1 : 0;

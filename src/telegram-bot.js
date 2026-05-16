@@ -1,11 +1,34 @@
 import { Bot, InlineKeyboard } from 'grammy';
+import { exec }                from 'node:child_process';
+import { promisify }           from 'node:util';
+import fs                      from 'node:fs/promises';
+import path                    from 'node:path';
 import { config }               from './config.js';
 import {
   getBotState, isPaused, isEmergencyStopped,
   setPaused, setEmergencyStop, resetEmergencyStop,
 } from './bot-state.js';
-import { reconcilePositions } from './position-manager.js';
+import { reconcilePositions, checkStability } from './position-manager.js';
 import { readAllTrades }      from './trade-journal.js';
+
+const execAsync = promisify(exec);
+let _isSwitching = false;
+
+async function updateEnvFile(isTestnet) {
+  const envPath = path.resolve(process.cwd(), '.env');
+  const tmpPath = `${envPath}.tmp`;
+  let content;
+  try { content = await fs.readFile(envPath, 'utf8'); } catch { content = ''; }
+  const regex = /^BINANCE_TESTNET\s*=.*/m;
+  const newLine = `BINANCE_TESTNET=${isTestnet}`;
+  if (regex.test(content)) {
+    content = content.replace(regex, newLine);
+  } else {
+    content = content.trimEnd() + `\n${newLine}\n`;
+  }
+  await fs.writeFile(tmpPath, content, 'utf8');
+  await fs.rename(tmpPath, envPath);
+}
 
 // ── Dépendances injectées depuis index.js ─────────────────────────────────────
 let _getPositions = () => [];
@@ -70,6 +93,28 @@ function buildInlineKeyboard(state) {
   return kb;
 }
 
+// ── État module-level pour retry polling + stop propre ────────────────────────
+let _bot             = null;
+let _pollingRetryTimer = null;
+let _isStopping      = false;
+let _currentDelay    = 5_000;
+
+const _isTelegramConflict409 = (err) =>
+  err?.error?.error_code === 409 ||
+  err?.error_code === 409 ||
+  err?.message?.includes('409: Conflict');
+
+export async function stopTelegramBot() {
+  if (_isStopping) return;
+  _isStopping = true;
+  console.log('[telegram-bot] Arrêt gracieux en cours...');
+  if (_pollingRetryTimer) { clearTimeout(_pollingRetryTimer); _pollingRetryTimer = null; }
+  if (_bot) {
+    try { await _bot.stop(); console.log('[telegram-bot] Bot arrêté.'); }
+    catch (err) { console.error('[telegram-bot] bot.stop() error:', err.message); }
+  }
+}
+
 // ── Démarrage du bot ──────────────────────────────────────────────────────────
 export function startTelegramBot() {
   if (!config.telegramBotToken) {
@@ -77,7 +122,8 @@ export function startTelegramBot() {
     return null;
   }
 
-  const bot = new Bot(config.telegramBotToken);
+  _bot = new Bot(config.telegramBotToken);
+  const bot = _bot;
 
   // État temporaire pour confirmation Emergency Stop (userId → timestamp)
   const pendingEmergency = new Map();
@@ -92,7 +138,7 @@ export function startTelegramBot() {
   // ── /start ────────────────────────────────────────────────────────────────
   bot.command('start', async (ctx) => {
     await ctx.reply(
-      `👋 <b>PerpEdge Admin Bot</b>\n\nCommandes disponibles :\n/status — état du bot\n/pause — pause nouvelles entrées\n/resume — reprendre\n/stop — arrêt d'urgence`,
+      `👋 <b>PerpEdge Admin Bot</b>\n\nCommandes disponibles :\n/status — état du bot\n/pause — pause nouvelles entrées\n/resume — reprendre\n/stop — arrêt d'urgence\n/testnet — basculer en TESTNET (si stable)\n/mainnet — basculer en MAINNET (si stable)\n/reconcile — réconciliation positions\n/export — export CSV des trades`,
       { parse_mode: 'HTML' }
     );
   });
@@ -151,6 +197,44 @@ export function startTelegramBot() {
     await ctx.reply('🔄 Flag Emergency Stop effacé. <b>Le bot reste en PAUSE.</b> Envoyez /resume pour reprendre les cycles.', { parse_mode: 'HTML' });
   });
 
+  // ── /testnet et /mainnet — bascule d'environnement ───────────────────────
+  async function handleEnvSwitch(ctx, target) {
+    if (_isSwitching) {
+      await ctx.reply('⚙️ Bascule déjà en cours — patientez.', { parse_mode: 'HTML' });
+      return;
+    }
+    const currentTestnet = String(process.env.BINANCE_TESTNET || '').toLowerCase() === 'true';
+    const wantTestnet    = target === 'testnet';
+    if (currentTestnet === wantTestnet) {
+      await ctx.reply(`ℹ️ Le bot est déjà en mode <b>${target.toUpperCase()}</b>.`, { parse_mode: 'HTML' });
+      return;
+    }
+    _isSwitching = true;
+    try {
+      await ctx.reply(`🔍 Vérification stabilité avant bascule vers <b>${target.toUpperCase()}</b>...`, { parse_mode: 'HTML' });
+      const stability = await checkStability();
+      if (!stability.ok) {
+        _isSwitching = false;
+        await ctx.reply(`❌ <b>Bascule refusée</b>\n\n${stability.reason}\n\nFerme toutes les positions et ordres avant de basculer.`, { parse_mode: 'HTML' });
+        return;
+      }
+      setPaused(true);
+      await ctx.reply(`✅ Bot stable. Bascule vers <b>${target.toUpperCase()}</b> en cours...\n\n⚠️ Le bot va redémarrer dans 2 secondes.`, { parse_mode: 'HTML' });
+      await updateEnvFile(wantTestnet);
+      console.log(`[telegram-bot] Bascule ${target.toUpperCase()} — restart PM2 dans 1s`);
+      await new Promise(r => setTimeout(r, 1000));
+      await execAsync('pm2 restart perpedge-bot');
+      process.exit(0);
+    } catch (err) {
+      _isSwitching = false;
+      console.error('[telegram-bot] handleEnvSwitch error:', err.message);
+      await ctx.reply(`💥 Erreur lors de la bascule: <code>${err.message}</code>`, { parse_mode: 'HTML' });
+    }
+  }
+
+  bot.command('testnet', (ctx) => handleEnvSwitch(ctx, 'testnet'));
+  bot.command('mainnet', (ctx) => handleEnvSwitch(ctx, 'mainnet'));
+
   // ── Callbacks inline keyboard ─────────────────────────────────────────────
   bot.callbackQuery('cmd:pause', async (ctx) => {
     setPaused(true);
@@ -183,6 +267,7 @@ export function startTelegramBot() {
     await ctx.answerCallbackQuery({ text: '🔄 Flag effacé — /resume pour reprendre' });
     await ctx.editMessageReplyMarkup({ reply_markup: buildInlineKeyboard(getBotState()) });
   });
+
 
   // ── /reconcile P8E.1 ─────────────────────────────────────────────────────
   bot.command('reconcile', async (ctx) => {
@@ -244,7 +329,38 @@ export function startTelegramBot() {
     catch (err) { console.error('[telegram-bot] pushAlert error:', err.message); }
   };
 
-  bot.start({ drop_pending_updates: true });
+  // bot.catch : erreurs de handlers update (pas les erreurs de polling)
+  bot.catch((err) => {
+    if (err.error?.error_code === 409) {
+      console.warn('[telegram-bot] 409 via bot.catch — ignoré.');
+      return;
+    }
+    console.error('[telegram-bot] Grammy error:', err.message);
+  });
+
+  // Polling avec retry backoff exponentiel sur 409
+  const _startPolling = async () => {
+    if (_isStopping) return;
+    try {
+      await bot.start({ drop_pending_updates: true });
+      _currentDelay = 5_000;
+    } catch (err) {
+      if (_isStopping) return;
+      if (_isTelegramConflict409(err)) {
+        console.warn(`[telegram-bot] 409 Conflict — retry dans ${_currentDelay / 1000}s (backoff)`);
+        _pollingRetryTimer = setTimeout(() => {
+          _pollingRetryTimer = null;
+          _currentDelay = Math.min(_currentDelay * 2, 45_000);
+          _startPolling();
+        }, _currentDelay);
+        return;
+      }
+      console.error('[telegram-bot] Polling error:', err.message);
+      _pollingRetryTimer = setTimeout(() => { _pollingRetryTimer = null; _startPolling(); }, 10_000);
+    }
+  };
+
+  _startPolling();
   console.log('[telegram-bot] Bot démarré (polling).');
   return bot;
 }

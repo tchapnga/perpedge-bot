@@ -1,12 +1,23 @@
 import cron from 'node-cron';
+import { sendCrashAlert } from './src/crash-notifier.js';
 import { config } from './src/config.js';
+
+// P9B.5 — PM2 crash alerts: notify Telegram before process exits so PM2 can restart
+process.on('uncaughtException', (err) => {
+  console.error('[crash] uncaughtException:', err);
+  sendCrashAlert(err).finally(() => process.exit(1));
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[crash] unhandledRejection:', reason);
+  sendCrashAlert(reason instanceof Error ? reason : new Error(String(reason))).finally(() => process.exit(1));
+});
 import { runPhase1 } from './src/scanner.js';
 import { runAnalysis } from './src/scorer.js';
 import { buildCombinedMessage, sendTelegram, sendTelegramPhoto } from './src/notifier.js';
 import { captureChart, cleanChart } from './src/chart-capture.js';
 import { injectSignal, computeLevels } from './src/injector.js';
 import { executeOrder } from './src/order-executor.js';
-import { registerTrade, startPositionManager, getTrackedPositions } from './src/position-manager.js';
+import { registerTrade, startPositionManager, getTrackedPositions, bootReconcile, startUserDataStream, stopUserDataStream } from './src/position-manager.js';
 import { startDashboard } from './src/dashboard.js';
 import { runSqueezeWatch } from './src/squeeze-watcher.js';
 import { startOiWatcher } from './src/oi-watcher.js';
@@ -21,7 +32,7 @@ import { startScalpScanner } from './src/scalp-scanner.js';
 import { scoreScalp } from './src/scalp-scorer.js';
 import { registerScalpTrade, startScalpManager, getScalpPositions } from './src/scalp-manager.js';
 import { startAdminApi, injectAdminDeps } from './src/admin-api.js';
-import { startTelegramBot, injectBotDeps } from './src/telegram-bot.js';
+import { startTelegramBot, stopTelegramBot, injectBotDeps } from './src/telegram-bot.js';
 import { startDailyReporter }              from './src/daily-reporter.js';
 import { recordCycle, recordSignal, recordTrade, isPaused, isEmergencyStopped, getMode } from './src/bot-state.js';
 
@@ -212,7 +223,11 @@ runCycle();
 setTimeout(() => startOiWatcher(),             3_000);
 setTimeout(() => runSqueezeWatch(),            5_000);
 setTimeout(() => startCrowdedUnwindWatcher(), 7_000);
-setTimeout(() => startPositionManager(),       9_000);
+setTimeout(async () => {
+  startPositionManager();
+  await bootReconcile().catch(err => console.error('[bootReconcile] error:', err.message));
+  startUserDataStream().catch(err => console.error('[userDataStream] start error:', err.message));
+},                                             9_000);
 setTimeout(() => startCapitulationWatcher(),                              11_000);
 setTimeout(() => startDashboard(() => getTrackedPositions(), () => signalLog), 13_000);
 startFeedbackAnalyzer();
@@ -272,3 +287,11 @@ injectBotDeps({ getPositions: getTrackedPositions, getSignalLog: () => signalLog
 startAdminApi().catch(err => console.error('[admin-api] Erreur démarrage:', err.message));
 startTelegramBot();
 startDailyReporter();
+
+// SIGTERM/SIGINT : arrêt propre du bot avant process.exit (piloté ici, pas dans telegram-bot.js)
+const _handleShutdown = async () => {
+  await Promise.allSettled([stopTelegramBot(), stopUserDataStream()]);
+  process.exit(0);
+};
+process.once('SIGTERM', _handleShutdown);
+process.once('SIGINT',  _handleShutdown);

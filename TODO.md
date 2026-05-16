@@ -13,6 +13,32 @@
 
 ---
 
+## ⚠️ REVUE MULTI-LLM EN ATTENTE — À faire avant mise en production live
+
+> **Contexte :** Playwright MCP non disponible lors de la session 2026-05-16. Les fixes ci-dessous ont été codés par Claude seul avec revue interne. Ils doivent être soumis aux 4 LLMs avant toute utilisation en mode LIVE.
+>
+> **Fichiers à soumettre en revue :**
+> - `src/injector.js` — `computeLevels()` : guard S/R direction (SL invalide short/long)
+> - `src/scanner.js` — `SYMBOL_BLACKLIST` : blacklist STARUSDT HTTP 500
+> - `src/crash-notifier.js` + `index.js` — uncaughtException/unhandledRejection PM2 crash alerts (P9B.5)
+> - `src/telegram-bot.js` — retry 409 grammy (P-ROBUSTNESS, non encore codé)
+> - `src/llm-validator.js` — guard LLM_MODE linux (P-ROBUSTNESS, non encore codé)
+>
+> **Procédure :** ouvrir Chrome → Playwright MCP → envoyer diff à ChatGPT+Gemini → DeepSeek+Claude review → consensus → merge
+
+---
+
+## CONFIGURATION ENVIRONNEMENTS
+
+| Env | Bot Telegram | Username | Token | Chat ID |
+|-----|-------------|----------|-------|---------|
+| **Production (VPS)** | Bot principal | `@bouketbot` | dans `.env` VPS | dans `.env` VPS |
+| **Local (dev)** | Bot de test | `@RodrigueperpBot` | dans `.env` local | `8003973127` |
+
+> Règle : ne jamais utiliser le même token sur local et VPS → conflit 409 Telegram (une seule instance polling autorisée par token).
+
+---
+
 ## P0 — Patches scorer.js + injector.js
 > Priorité absolue. 4 gates déterministes manquantes identifiées en sim #4 (-$129).
 
@@ -85,7 +111,7 @@
 |---|---|---|
 | P2t.1 | Endpoint /api/scan/capitulation (perp-mcp-server) | `[✓]` |
 | P2t.2 | Watcher : WATCH 4h + TRIGGER 5min | `[✓]` |
-| P2t.3 | Redéployer perp-mcp-server sur VPS — endpoint /api/scan/capitulation retourne 404 en prod | `[ ]` |
+| P2t.3 | Redéployer perp-mcp-server sur VPS — endpoint /api/scan/capitulation retourne 404 en prod | `[✓]` docker compose build --no-cache + up — 2026-05-16 |
 
 ---
 
@@ -245,10 +271,10 @@
 |---|---|---|
 | P9B.1 | Variables d'env Windows → `.env` VPS Linux | Copier `.env` sur VPS, jamais dans le repo git |
 | P9B.2 | Configurer PM2 : `ecosystem.config.js` avec restart policy | `max_restarts: 5`, `min_uptime: 10s`, `watch: false` |
-| P9B.3 | PM2 startup : survie aux redémarrages VPS | `pm2 startup` + `pm2 save` |
-| P9B.4 | Logs PM2 rotatifs | `pm2 install pm2-logrotate` — max 10 MB par fichier, 7 jours |
-| P9B.5 | Alertes crash Telegram | Si PM2 relance le bot → envoyer message Telegram avec raison du crash |
-| P9B.6 | Firewall VPS : n'exposer que les ports nécessaires | Port 3001 (dashboard HTTP) + 3002 (admin API P8) uniquement en local ou via tunnel |
+| P9B.3 | PM2 startup : survie aux redémarrages VPS | `pm2 startup` + `pm2 save` | `[✓]` systemctl enable pm2-ubuntu OK — 2026-05-16 |
+| P9B.4 | Logs PM2 rotatifs | `pm2 install pm2-logrotate` — max 10 MB par fichier, 30 fichiers, rotation minuit, compress | `[✓]` 2026-05-16 |
+| P9B.5 | Alertes crash Telegram | Si PM2 relance le bot → envoyer message Telegram avec raison du crash | `[✓]` src/crash-notifier.js + uncaughtException/unhandledRejection dans index.js — 2026-05-16 |
+| P9B.6 | Firewall VPS : n'exposer que les ports nécessaires | Port 3001 (dashboard HTTP) + 3002 (admin API P8) uniquement en local ou via tunnel | `[✓]` UFW nettoyé (3000+8000 public supprimés, 80/443 ajoutés). DOCKER-USER rules (drop 3000/6379/8000/8001/8086/8123/9000 hors 172.x). Persistance via `/etc/systemd/system/docker-fw.service`. — 2026-05-16 |
 
 ### P9-C — Vérification APIs avant Go-Live
 
@@ -579,11 +605,46 @@ Voir tableau P8-E ci-dessus (P8E.1 à P8E.6).
 
 ---
 
-### [ ] P9-H — Script de déploiement SSH complet
-> `scripts/deploy-prod.sh` · SSH depuis local → VPS · orchestre bot + perp-mcp-server + mini-app build · health checks 3 services · rapport final ✅/❌
-> Voir détail section P9-H ci-dessus.
+### [✓] P9-H — Script de déploiement SSH complet — 2026-05-16
+> `scripts/deploy-ssh.sh` · 6 étapes : prérequis → backup .env → git pull → npm ci → build mini-app → pm2 reload --update-env
+> npm run deploy:ssh · npm run deploy:ssh:fast (--skip-miniapp)
+> Health checks : /admin/health (bot) + /health (perp-mcp) — testés ✅ HTTP 200
 
 ---
 
-### [ ] P2t.3 — Redéployer perp-mcp-server
-> Bloquant pour capitulation-watcher · endpoint `/api/scan/capitulation` retourne 404
+### [?] P-LLM-VPS — Réflexion : remplacer Playwright par APIs directes en production
+> Statut actuel : en prod, seul Claude API est utilisé (fallback automatique quand `chrome_locked`).
+> Playwright + Chrome headless sur VPS est techniquement possible mais fragile (sessions LLM expirables, CAPTCHAs, maintenance).
+>
+> **Option étudiée :** remplacer les 3 LLMs locaux (browser) par leurs APIs directes en prod :
+> - Claude API → déjà actif ✅
+> - OpenAI API → `OPENAI_API_KEY` + appel direct `api.openai.com/v1/chat/completions`
+> - Gemini API → `GEMINI_API_KEY` + appel direct `generativelanguage.googleapis.com`
+>
+> **Avantages :** 0 dépendance navigateur, fiable, pas de maintenance session.
+> **Inconvénients :** coût par token sur 3 APIs, clés supplémentaires à gérer.
+>
+> **Décision en attente** — soumettre aux 4 LLMs avant implémentation. En attendant : Claude API seul en prod, Playwright local uniquement.
+
+---
+
+### [ ] P-ROBUSTNESS — Durcir le bot local et production
+
+> **Contexte :** plusieurs incidents de fragilité identifiés en session 2026-05-16.
+>
+> **Problèmes observés :**
+> - `node --watch` redémarre immédiatement après crash 409 → boucle infinie grammy (local)
+> - `LLM_MODE=local` sur VPS avec `DISPLAY` défini → Playwright tenté → `chrome_locked` → alerte Telegram polluante
+> - Pas de retry gracieux sur 409 dans `telegram-bot.js` → crash process complet
+> - Pas de guard "une seule instance" au niveau du process (token lock file, PM2 watch:false déjà OK en prod)
+>
+> **Travaux à faire (minimum 2 reviewers, protocole multi-LLM) :**
+> - [ ] `telegram-bot.js` : catch 409 + retry avec délai 35s (3 tentatives max) au lieu de crash
+> - [ ] `llm-validator.js` : supprimer le test `!process.env.DISPLAY` fragile → forcer `LLM_MODE=claude` si `process.platform === 'linux'`
+> - [ ] `scripts/start-dev.sh` (nouveau) : wrapper local qui vérifie qu'aucun node ne tourne avant de démarrer
+> - [ ] `.env` local : documenter que `LLM_MODE` doit rester `local` en dev (Playwright actif) et `claude` en prod
+
+---
+
+### [✓] P2t.3 — Redéployer perp-mcp-server
+> `docker compose build --no-cache && docker compose up -d perp-mcp` — 2026-05-16. Endpoint `/api/scan/capitulation` HTTP 200 confirmé.

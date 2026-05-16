@@ -35,6 +35,12 @@ declare global {
 }
 
 export type BotMode = "LIVE" | "SHADOW" | "DRY_RUN";
+export type NetworkEnv = "TESTNET" | "MAINNET";
+
+export interface NetworkStatus {
+  network: NetworkEnv;
+  binanceTestnet: boolean;
+}
 export type PositionSide = "LONG" | "SHORT";
 export type SignalSide = "LONG" | "SHORT" | "NO_TRADE";
 
@@ -231,4 +237,73 @@ export function getEquity(): Promise<{ series: EquityPoint[] }> {
 
 export function getRisk(): Promise<RiskData> {
   return request<RiskData>("/admin/risk");
+}
+
+// ── P8E types ─────────────────────────────────────────────────────────────────
+export interface MyRole {
+  userId: string;
+  role: string;
+}
+
+export interface ReconcileResult {
+  ok: boolean;
+  binancePositions?: unknown[];
+  botOnly?: { symbol: string }[];
+  binanceOnly?: { symbol: string }[];
+  mismatch?: {
+    symbol: string;
+    botDirection: string;
+    botQty: number;
+    binanceDirection: string;
+    binanceQty: number;
+  }[];
+  error?: string;
+}
+
+// ── P8E API calls ─────────────────────────────────────────────────────────────
+export function getMyRole(): Promise<MyRole> {
+  return request<MyRole>("/admin/me");
+}
+
+export function getNetwork(): Promise<NetworkStatus> {
+  return request<NetworkStatus>("/admin/network");
+}
+
+export function switchNetwork(
+  network: NetworkEnv
+): Promise<{ ok: boolean; network: NetworkEnv; restarting: boolean }> {
+  return request<{ ok: boolean; network: NetworkEnv; restarting: boolean }>("/admin/network", {
+    method: "POST",
+    body: { network },
+  });
+}
+
+export function getReconcile(): Promise<ReconcileResult> {
+  return request<ReconcileResult>("/admin/reconcile");
+}
+
+export async function downloadExport(): Promise<void> {
+  const res = await fetch(`${BASE_URL}/admin/export`, {
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+  });
+  if (res.status === 404) throw new Error("Aucun trade disponible pour l'export.");
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Export échoué: ${res.status}${body ? ` — ${body}` : ""}`);
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  const cd = res.headers.get("content-disposition");
+  let filename = `trades_${new Date().toISOString().split("T")[0]}.csv`;
+  if (cd) {
+    const m = cd.match(/filename="?([^"]+)"?/);
+    if (m?.[1]) filename = m[1];
+  }
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
 }

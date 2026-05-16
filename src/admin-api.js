@@ -1,10 +1,11 @@
 import Fastify          from 'fastify';
-import { appendFile }   from 'fs/promises';
+import { appendFile, readFile, writeFile } from 'fs/promises';
+import { exec }          from 'child_process';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { config }       from './config.js';
 import { getBotState, setPaused, setMode, setEmergencyStop, resetEmergencyStop, setModuleEnabled } from './bot-state.js';
 import { readAllTrades } from './trade-journal.js';
-import { reconcilePositions } from './position-manager.js';
+import { reconcilePositions, forceClosePosition, bootReconcile } from './position-manager.js';
 
 // ── Log ring buffer P8D.7 — interception console.* au niveau module ───────────
 const LOG_BUFFER = [];
@@ -53,13 +54,21 @@ function _maxDrawdownUsdt(series) {
   return +maxDD.toFixed(2);
 }
 
+// ── CSV escape ────────────────────────────────────────────────────────────────
+function _escapeCsv(v) {
+  if (v.includes(',') || v.includes('"') || v.includes('\n')) {
+    return `"${v.replace(/"/g, '""')}"`;
+  }
+  return v;
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const PORT        = Number(process.env.ADMIN_API_PORT ?? 3002);
 const AUDIT_FILE  = 'admin_audit.jsonl';
 const IS_PROD     = process.env.NODE_ENV === 'production';
 
-// Max age initData Telegram : 5 min (300s)
-const INIT_DATA_MAX_AGE_S = 300;
+// Max age initData Telegram : 24h — convention standard mini-apps Telegram
+const INIT_DATA_MAX_AGE_S = 86400;
 
 // Whitelist userId Telegram autorisés — séparés par virgule dans .env
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS ?? '')
@@ -113,7 +122,7 @@ async function audit(action, userId, detail = {}) {
 
 // ── Rate limiting in-memory (10 req/min prod / 300 req/min dev) ──────────────
 const rateLimiter = new Map(); // userId → { count, windowStart }
-const RATE_LIMIT  = IS_PROD ? 10 : 300;
+const RATE_LIMIT  = IS_PROD ? 120 : 600;
 const RATE_WINDOW = 60_000;
 
 function checkRateLimit(userId) {
@@ -198,7 +207,7 @@ function authMiddleware(req, reply, done) {
   }
 
   if (!checkRateLimit(userId)) {
-    reply.code(429).send({ error: 'Rate limit exceeded (10 req/min)' });
+    reply.code(429).send({ error: `Rate limit exceeded (${RATE_LIMIT} req/min)` });
     return;
   }
 
@@ -298,6 +307,20 @@ export async function startAdminApi() {
   // ── Reconciliation P8E.1 ─────────────────────────────────────────────────
   app.get('/admin/reconcile', async () => reconcilePositions());
 
+  // ── Force-close une position par symbole (test + urgence) ─────────────────
+  app.post('/admin/force-close/:symbol', { preHandler: [requireRole('OPERATOR')] }, async (req, reply) => {
+    const symbol = String(req.params.symbol).toUpperCase();
+    const result = await forceClosePosition(symbol);
+    await audit(`FORCE_CLOSE:${symbol}`, req.adminUserId);
+    return result;
+  });
+
+  // ── Boot-reconcile manuel (reload store + compare Binance) ───────────────
+  app.post('/admin/boot-reconcile', { preHandler: [requireRole('OPERATOR')] }, async () => {
+    await bootReconcile();
+    return { ok: true };
+  });
+
   // ── Commands (OPERATOR minimum) ──────────────────────────────────────────
   app.post('/admin/commands', { preHandler: [requireRole('OPERATOR')] }, async (req, reply) => {
     const { command } = req.body ?? {};
@@ -347,8 +370,8 @@ export async function startAdminApi() {
   app.patch('/admin/config', { preHandler: [requireRole('OPERATOR')] }, async (req, reply) => {
     const { mode } = req.body ?? {};
     if (mode) {
-      const valid = ['LIVE','SHADOW','DRY_RUN'].includes(mode);
-      if (!valid) return reply.code(400).send({ error: 'Invalid mode. Allowed: LIVE, SHADOW, DRY_RUN' });
+      const valid = ['LIVE','SHADOW'].includes(mode);
+      if (!valid) return reply.code(400).send({ error: 'Invalid mode. Allowed: LIVE, SHADOW' });
       setMode(mode);
       await audit('SET_MODE', req.adminUserId, { mode });
     }
@@ -416,6 +439,70 @@ export async function startAdminApi() {
       if (Number.isFinite(ts)) logs = logs.filter(l => new Date(l.ts).getTime() > ts);
     }
     return { logs: logs.slice(-200) };
+  });
+
+  // ── Me — userId + role courant (P8E) ─────────────────────────────────────
+  app.get('/admin/me', async (req) => ({
+    userId: req.adminUserId,
+    role:   getUserRole(req.adminUserId),
+  }));
+
+  // ── Network — lire/basculer testnet ↔ mainnet ────────────────────────────
+  app.get('/admin/network', async () => ({
+    network:        process.env.BINANCE_TESTNET === 'true' ? 'TESTNET' : 'MAINNET',
+    binanceTestnet: process.env.BINANCE_TESTNET === 'true',
+  }));
+
+  app.post('/admin/network', { preHandler: [requireRole('ADMIN')] }, async (req, reply) => {
+    const { network } = req.body ?? {};
+    if (!['TESTNET', 'MAINNET'].includes(network))
+      return reply.code(400).send({ error: 'network must be TESTNET or MAINNET' });
+
+    const targetVal = network === 'TESTNET' ? 'true' : 'false';
+    const envPath   = `${process.cwd()}/.env`;
+
+    try {
+      let content = await readFile(envPath, 'utf8');
+      content = content.split('\n').filter(l => !l.startsWith('BINANCE_TESTNET=')).join('\n');
+      if (!content.endsWith('\n')) content += '\n';
+      content += `BINANCE_TESTNET=${targetVal}\n`;
+      await writeFile(envPath, content, 'utf8');
+    } catch (err) {
+      console.error('[admin-api] network switch .env error:', err.message);
+      return reply.code(500).send({ error: `Failed to update .env: ${err.message}` });
+    }
+
+    await audit(`SWITCH_NETWORK:${network}`, req.adminUserId);
+    setTimeout(() => exec('pm2 restart perpedge-bot', () => {}), 800);
+    return { ok: true, network, restarting: true };
+  });
+
+  // ── Export CSV des trades (P8E — OPERATOR minimum) ───────────────────────
+  app.get('/admin/export', { preHandler: [requireRole('OPERATOR')] }, async (req, reply) => {
+    try {
+      const trades = await readAllTrades();
+      if (!trades || trades.length === 0) return reply.code(404).send({ error: 'no trades' });
+
+      const cols = ['date_closed','symbol','direction','entry_price','exit_price','qty','pnl_usdt','pnl_pct','exit_reason'];
+      const rows = [cols.join(',')];
+      for (const t of trades) {
+        rows.push(cols.map(c => {
+          const v = t[c] ?? '';
+          if (c === 'exit_reason') return _escapeCsv(String(v));
+          return String(v);
+        }).join(','));
+      }
+
+      const dateStr  = new Date().toISOString().split('T')[0];
+      const filename = `trades_${dateStr}.csv`;
+      reply
+        .header('Content-Type', 'text/csv')
+        .header('Content-Disposition', `attachment; filename="${filename}"`)
+        .send(rows.join('\n'));
+    } catch (err) {
+      console.error('[admin-api] export error:', err.message);
+      return reply.code(500).send({ error: 'Export failed' });
+    }
   });
 
   await app.listen({ port: PORT, host: '0.0.0.0' });

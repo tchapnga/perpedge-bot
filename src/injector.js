@@ -17,12 +17,13 @@ export function computeLevels(result) {
     : close;
   let sl, tp1, tp2;
   if (direction === 'long') {
-    sl  = sr.nearest_support    ?? (entry * (1 - 0.03));
-    tp1 = sr.nearest_resistance ?? (entry * (1 + 0.03));
+    // S/R must be on correct side of entry — stale data can place it wrong
+    sl  = (sr.nearest_support    != null && sr.nearest_support    < entry) ? sr.nearest_support    : entry * (1 - 0.03);
+    tp1 = (sr.nearest_resistance != null && sr.nearest_resistance > entry) ? sr.nearest_resistance : entry * (1 + 0.03);
     tp2 = Math.max(tp1, entry + 2.0 * (entry - sl));
   } else {
-    sl  = sr.nearest_resistance ?? (entry * (1 + 0.03));
-    tp1 = sr.nearest_support    ?? (entry * (1 - 0.03));
+    sl  = (sr.nearest_resistance != null && sr.nearest_resistance > entry) ? sr.nearest_resistance : entry * (1 + 0.03);
+    tp1 = (sr.nearest_support    != null && sr.nearest_support    < entry) ? sr.nearest_support    : entry * (1 - 0.03);
     tp2 = Math.min(tp1, entry - 2.0 * (sl - entry));
   }
   return { entry, sl, tp1, tp2 };

@@ -6,13 +6,22 @@ import Analyze  from "@/pages/Analyze";
 import Risk     from "@/pages/Risk";
 import Logs     from "@/pages/Logs";
 import { getSignals, getStatus, patchConfig, toggleModule } from "@/lib/api";
+import { useMyRole } from "@/hooks/useMyRole";
 import { Badge }   from "@/components/ui/badge";
 import { Button }  from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+function roleBadgeClass(role: string): string {
+  if (role === "ADMIN")    return "bg-emerald-600 text-white hover:bg-emerald-600";
+  if (role === "OPERATOR") return "bg-blue-600 text-white hover:bg-blue-600";
+  if (role === "TRADER")   return "bg-purple-600 text-white hover:bg-purple-600";
+  return "bg-zinc-600 text-white hover:bg-zinc-600";
+}
+
 export default function App(): JSX.Element {
   const isTelegram = Boolean(window.Telegram?.WebApp?.initData);
+  const { role, isLoading: roleLoading } = useMyRole();
 
   useEffect(() => {
     const tg = window.Telegram?.WebApp;
@@ -71,6 +80,14 @@ export default function App(): JSX.Element {
             <span>{label}</span>
           </TabsTrigger>
         ))}
+        {/* P8E — RoleBadge discret en coin droit de la nav */}
+        {!roleLoading && (
+          <Badge
+            className={`absolute right-1.5 top-1 h-4 px-1.5 text-[9px] font-bold uppercase tracking-wide border-none ${roleBadgeClass(role)}`}
+          >
+            {role}
+          </Badge>
+        )}
       </TabsList>
     </Tabs>
   );

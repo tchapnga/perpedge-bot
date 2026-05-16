@@ -4,7 +4,7 @@ function todayUTC() { return new Date().toISOString().slice(0, 10); }
 
 const state = {
   isPaused:         false,
-  mode:             'LIVE',        // 'LIVE' | 'SHADOW' | 'DRY_RUN'
+  mode:             'LIVE',        // 'LIVE' | 'SHADOW'
   emergencyStopped: false,
 
   modules: {
@@ -32,7 +32,7 @@ export function getMode()             { return state.mode; }
 
 // Setters
 export function setPaused(v)          { state.isPaused = Boolean(v); }
-export function setMode(m)            { if (['LIVE','SHADOW','DRY_RUN'].includes(m)) state.mode = m; }
+export function setMode(m)            { if (['LIVE','SHADOW'].includes(m)) state.mode = m; }
 
 export function setEmergencyStop() {
   state.emergencyStopped = true;

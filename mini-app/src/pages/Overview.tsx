@@ -1,6 +1,6 @@
 import { useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, Pause, Play, ShieldAlert, TrendingUp } from "lucide-react";
+import { AlertTriangle, Globe, Pause, Play, ShieldAlert, TrendingUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { type Command, type EquityPoint, getEquity, getPositions, getSignals, getStatus, postCommand } from "@/lib/api";
+import { type Command, type EquityPoint, type NetworkEnv, getEquity, getNetwork, getPositions, getSignals, getStatus, postCommand, switchNetwork } from "@/lib/api";
+import { useMyRole } from "@/hooks/useMyRole";
+import { ReconcilePanel } from "@/components/ReconcilePanel";
+import { ExportButton } from "@/components/ExportButton";
 
 // ── P8D.5 — Equity Sparkline SVG ─────────────────────────────────────────────
 function EquitySparkline({ series }: { series: EquityPoint[] }): JSX.Element {
@@ -80,6 +83,11 @@ export default function Overview(): JSX.Element {
   const [commandLoading, setCommandLoading] = useState<Command | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [networkDialogOpen, setNetworkDialogOpen] = useState(false);
+  const [networkLoading, setNetworkLoading] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [pendingNetwork, setPendingNetwork] = useState<NetworkEnv | null>(null);
+  const { isOperator, isAdmin, role } = useMyRole();
 
   const { data: status, error: statusError, mutate: mutateStatus } = useSWR(
     "status",
@@ -92,7 +100,8 @@ export default function Overview(): JSX.Element {
     { refreshInterval: 5000 }
   );
   const { data: signals } = useSWR("signals", getSignals, { refreshInterval: 5000 });
-  const { data: equity  } = useSWR("equity",  getEquity,  { refreshInterval: 60000 });
+  const { data: equity      } = useSWR("equity",   getEquity,   { refreshInterval: 60000 });
+  const { data: networkData } = useSWR("network",  getNetwork,  { refreshInterval: 0, revalidateOnFocus: false });
 
   const executeCommand = async (cmd: Command): Promise<void> => {
     setCommandError(null);
@@ -113,12 +122,33 @@ export default function Overview(): JSX.Element {
     }
   };
 
+  const currentNetwork: NetworkEnv = networkData?.network ?? "TESTNET";
+  const targetNetwork: NetworkEnv  = currentNetwork === "TESTNET" ? "MAINNET" : "TESTNET";
+
+  const confirmNetworkSwitch = async (): Promise<void> => {
+    if (!pendingNetwork) return;
+    try {
+      setNetworkLoading(true);
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("warning");
+      await switchNetwork(pendingNetwork);
+      setNetworkDialogOpen(false);
+      setRestarting(true);
+      setTimeout(() => window.location.reload(), 10000);
+    } catch (err) {
+      setCommandError(err instanceof Error ? err.message : "Erreur lors du changement de réseau.");
+    } finally {
+      setNetworkLoading(false);
+    }
+  };
+
   const totalPnl =
     status?.unrealizedPnl ?? positions?.reduce((acc, p) => acc + (p.unrealizedPnl ?? 0), 0) ?? 0;
   const openPositions = status?.openPositions ?? positions?.length ?? 0;
   const signalsToday = status?.signalsToday ?? signals?.length ?? 0;
 
   if (statusError || positionsError) {
+    const err = statusError ?? positionsError;
+    const errMsg: string = err instanceof Error ? err.message : String(err ?? "");
     return (
       <Card className="border-red-900/60">
         <CardHeader>
@@ -127,8 +157,13 @@ export default function Overview(): JSX.Element {
             API indisponible
           </CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Vérifie que l'API Fastify écoute sur le port 3002 et que les headers d'auth sont acceptés.
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>Erreur de communication avec le backend.</p>
+          {errMsg && (
+            <pre className="overflow-x-auto rounded bg-muted p-2 text-xs text-foreground whitespace-pre-wrap break-all">
+              {errMsg}
+            </pre>
+          )}
         </CardContent>
       </Card>
     );
@@ -148,6 +183,14 @@ export default function Overview(): JSX.Element {
           <Badge variant={status?.emergencyStopped ? "destructive" : status?.isPaused ? "secondary" : "success"}>
             {status?.emergencyStopped ? "EMERGENCY" : status?.isPaused ? "PAUSED" : "RUNNING"}
           </Badge>
+          {networkData && (
+            <Badge
+              variant={currentNetwork === "MAINNET" ? "success" : "secondary"}
+              className={currentNetwork === "TESTNET" ? "border border-yellow-500/60 text-yellow-400" : ""}
+            >
+              {currentNetwork}
+            </Badge>
+          )}
         </div>
       </header>
 
@@ -162,68 +205,123 @@ export default function Overview(): JSX.Element {
         <StatCard title="Cycles" value={String(status?.cycleCount ?? "—")} />
       </section>
 
+      {restarting && (
+        <div className="rounded-xl border border-yellow-900/60 bg-yellow-950/30 p-3 text-sm text-yellow-200">
+          <Globe className="mr-2 inline h-4 w-4" />
+          Bot en cours de redémarrage en <strong>{pendingNetwork}</strong>... Reconnexion automatique dans ~10 s.
+        </div>
+      )}
+
       {commandError ? (
         <div className="rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-200">
           {commandError}
         </div>
       ) : null}
 
-      <section className="flex flex-wrap gap-3">
-        {status?.emergencyStopped ? (
-          <Button
-            variant="secondary"
-            onClick={() => executeCommand("RESET_EMERGENCY")}
-            disabled={commandLoading !== null}
-          >
-            <ShieldAlert className="mr-2 h-4 w-4" />
-            Reset Emergency
-          </Button>
-        ) : status?.isPaused ? (
-          <Button onClick={() => executeCommand("RESUME")} disabled={commandLoading !== null}>
-            <Play className="mr-2 h-4 w-4" />
-            Reprendre
-          </Button>
-        ) : (
-          <Button
-            variant="secondary"
-            onClick={() => executeCommand("PAUSE_NEW_ENTRIES")}
-            disabled={commandLoading !== null}
-          >
-            <Pause className="mr-2 h-4 w-4" />
-            Pause
-          </Button>
-        )}
-
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button variant="destructive">
+      {role === "VIEWER" ? (
+        <div className="rounded-xl border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+          Mode lecture seule — les actions système requièrent un rôle OPERATOR ou supérieur.
+        </div>
+      ) : (
+        <section className="flex flex-wrap gap-3">
+          {status?.emergencyStopped ? (
+            <Button
+              variant="secondary"
+              onClick={() => executeCommand("RESET_EMERGENCY")}
+              disabled={commandLoading !== null}
+            >
               <ShieldAlert className="mr-2 h-4 w-4" />
-              Emergency Stop
+              Reset Emergency
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Confirmer l'arrêt d'urgence</DialogTitle>
-              <DialogDescription>
-                Cette action bloque immédiatement toutes les nouvelles entrées. Réservée aux
-                situations critiques.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="secondary" onClick={() => setDialogOpen(false)}>
-                Annuler
+          ) : status?.isPaused ? (
+            <Button onClick={() => executeCommand("RESUME")} disabled={commandLoading !== null}>
+              <Play className="mr-2 h-4 w-4" />
+              Reprendre
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              onClick={() => executeCommand("PAUSE_NEW_ENTRIES")}
+              disabled={commandLoading !== null}
+            >
+              <Pause className="mr-2 h-4 w-4" />
+              Pause
+            </Button>
+          )}
+
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="destructive">
+                <ShieldAlert className="mr-2 h-4 w-4" />
+                Emergency Stop
               </Button>
-              <Button
-                variant="destructive"
-                onClick={() => executeCommand("EMERGENCY_STOP")}
-                disabled={commandLoading !== null}
-              >
-                Confirmer
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </section>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Confirmer l'arrêt d'urgence</DialogTitle>
+                <DialogDescription>
+                  Cette action bloque immédiatement toutes les nouvelles entrées. Réservée aux
+                  situations critiques.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setDialogOpen(false)}>
+                  Annuler
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => executeCommand("EMERGENCY_STOP")}
+                  disabled={commandLoading !== null}
+                >
+                  Confirmer
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {isAdmin && networkData && (
+            <Dialog open={networkDialogOpen} onOpenChange={setNetworkDialogOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="secondary"
+                  className={
+                    targetNetwork === "MAINNET"
+                      ? "border border-green-700/60 text-green-400 hover:bg-green-950/40"
+                      : "border border-yellow-700/60 text-yellow-400 hover:bg-yellow-950/40"
+                  }
+                  onClick={() => setPendingNetwork(targetNetwork)}
+                  disabled={commandLoading !== null || restarting}
+                >
+                  <Globe className="mr-2 h-4 w-4" />
+                  Passer en {targetNetwork}
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Changer d'environnement</DialogTitle>
+                  <DialogDescription>
+                    Le bot va basculer de <strong>{currentNetwork}</strong> vers{" "}
+                    <strong>{pendingNetwork ?? targetNetwork}</strong> puis redémarrer
+                    automatiquement (~10 s d'interruption).
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <Button variant="secondary" onClick={() => setNetworkDialogOpen(false)}>
+                    Annuler
+                  </Button>
+                  <Button
+                    variant={pendingNetwork === "MAINNET" ? "default" : "secondary"}
+                    onClick={confirmNetworkSwitch}
+                    disabled={networkLoading}
+                  >
+                    {networkLoading ? "Redémarrage..." : `Confirmer → ${pendingNetwork ?? targetNetwork}`}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+        </section>
+      )}
 
       <Card>
         <CardHeader>
@@ -236,6 +334,14 @@ export default function Overview(): JSX.Element {
           <EquitySparkline series={equity?.series ?? []} />
         </CardContent>
       </Card>
+
+      <ReconcilePanel />
+
+      {isOperator && (
+        <div className="flex justify-end">
+          <ExportButton isOperator={isOperator} />
+        </div>
+      )}
 
       <Card>
         <CardHeader>

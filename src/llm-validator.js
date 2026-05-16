@@ -21,7 +21,8 @@ Signal JSON à valider:
 
 const CHROME_PROFILE      = 'C:\\tools\\chrome-playwright-profile';
 const MODEL               = 'claude-sonnet-4-6';
-const TIMEOUT_MS          = 8000;
+const TIMEOUT_MS          = 30_000;
+const TIMEOUT_RETRIES     = 1;
 const LOCAL_MIN_RESPONSES = 2;   // Minimum LLMs valides requis pour accepter le consensus local
 const VALID_DECISIONS     = new Set(['APPROVE', 'REJECT', 'CONTRARIAN_FLIP', 'PENDING']);
 
@@ -162,14 +163,49 @@ if (process.env.ANTHROPIC_API_KEY) {
   anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
-async function callValidatorClaude(scoreResult) {
-  if (!anthropic) throw new Error('ANTHROPIC_API_KEY absent');
-  const msg = await anthropic.messages.create(
-    { model: MODEL, temperature: 0.1, max_tokens: 300, system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: JSON.stringify(scoreResult) }] },
-    { signal: AbortSignal.timeout(TIMEOUT_MS) },
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTimeoutError(err) {
+  const message = String(err?.message || '').toLowerCase();
+  return (
+    err?.name === 'TimeoutError' ||
+    err?.name === 'AbortError'   ||
+    message.includes('aborted')  ||
+    message.includes('timeout')
   );
-  return normalizeDecision(extractJson(extractTextContent(msg)));
+}
+
+function isJsonError(err) {
+  const message = String(err?.message || '');
+  return (
+    err instanceof SyntaxError             ||
+    message.includes('JSON')               ||
+    message.includes('Invalid validator')  ||
+    message.includes('Empty LLM response') ||
+    message.includes('No JSON object found')
+  );
+}
+
+async function callValidatorClaude(scoreResult, systemOverride = null) {
+  if (!anthropic) throw new Error('ANTHROPIC_API_KEY absent');
+  let lastErr;
+  for (let attempt = 0; attempt <= TIMEOUT_RETRIES; attempt += 1) {
+    try {
+      const msg = await anthropic.messages.create(
+        { model: MODEL, temperature: 0.1, max_tokens: 300,
+          system: systemOverride ?? SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: JSON.stringify(scoreResult) }] },
+        { signal: AbortSignal.timeout(TIMEOUT_MS) },
+      );
+      return normalizeDecision(extractJson(extractTextContent(msg)));
+    } catch (err) {
+      lastErr = err;
+      if (!isTimeoutError(err) || attempt === TIMEOUT_RETRIES) throw err;
+      const backoffMs = 1_000 * 2 ** attempt + Math.random() * 500;
+      await sleep(backoffMs);
+    }
+  }
+  throw lastErr;
 }
 
 // ─── Local mode — Playwright multi-LLM ───────────────────────────────────────
@@ -355,21 +391,23 @@ export async function validateSignal(scoreResult) {
     }
   }
 
-  // VPS mode — Claude API avec retry JSON
+  // VPS mode — Claude API avec retry timeout (BUG-3) + retry JSON system override (BUG-4)
   try {
     let validation;
     try {
       validation = await callValidatorClaude(scoreResult);
     } catch (err) {
-      const msg = String(err?.message || '');
-      if (
-        err instanceof SyntaxError          ||
-        msg.includes('JSON')                ||
-        msg.includes('Invalid validator')   ||
-        msg.includes('Empty LLM response')  ||
-        msg.includes('No JSON object found')
-      ) {
-        validation = await callValidatorClaude(scoreResult);
+      if (isJsonError(err)) {
+        try {
+          const strictJsonSystem = `${SYSTEM_PROMPT}\n\nCRITICAL: Réponds UNIQUEMENT avec du JSON brut valide. N'utilise pas de markdown. N'ajoute aucun texte avant ou après le JSON.`;
+          validation = await callValidatorClaude(scoreResult, strictJsonSystem);
+        } catch (retryErr) {
+          if (isJsonError(retryErr)) {
+            validation = failOpen('Claude JSON parsing failed after strict JSON retry');
+          } else {
+            throw retryErr;
+          }
+        }
       } else {
         throw err;
       }

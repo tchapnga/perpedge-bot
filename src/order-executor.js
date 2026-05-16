@@ -130,19 +130,9 @@ export async function executeOrder(signal) {
     const entry      = normalizeEntry(signal.entry);
     const orderSide  = mapOrderSide(signal.side);
 
-    if (mode !== 'LIVE') {
-      console.log(`[order-executor] ${mode} — ordre simulé ${orderSide} ${symbol}@${entry}`);
-      return {
-        success:   true,
-        orderId:   `sim_${mode.toLowerCase()}_${Date.now()}`,
-        side:      orderSide,
-        symbol,
-        price:     entry,
-        qty:       '0',
-        leverage:  DEFAULT_LEVERAGE,
-        simulated: true,
-        mode,
-      };
+    if (mode === 'SHADOW') {
+      console.log(`[order-executor] SHADOW — ordre non envoyé ${orderSide} ${symbol}@${entry}`);
+      return { success: false, error: 'SHADOW mode: ordre bloqué', mode };
     }
 
     const reduceSize = Boolean(signal.extra?.reduce_size);
@@ -155,7 +145,7 @@ export async function executeOrder(signal) {
 
     // Double-check : détecte un changement de mode pendant les awaits de préparation
     if (getMode() !== 'LIVE') {
-      throw new Error('ModeGuard: mode changed during order execution');
+      throw new Error(`ModeGuard: mode changé pendant l'exécution (${getMode()})`);
     }
 
     const order = await signedRequest('POST', '/fapi/v1/order', {
