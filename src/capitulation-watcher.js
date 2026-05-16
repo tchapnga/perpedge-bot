@@ -1,8 +1,9 @@
 // Capitulation Watcher — détecte price 4h drop + funding négatif + OI collapse → LONG setup
 import { runAnalysis } from './scorer.js';
 import { getBotState } from './bot-state.js';
-import { buildCombinedMessage, sendTelegram } from './notifier.js';
-import { injectSignal } from './injector.js';
+import { buildCombinedMessage, sendTelegram, sendTelegramPhoto } from './notifier.js';
+import { injectSignal, computeLevels } from './injector.js';
+import { captureChart, cleanChart } from './chart-capture.js';
 import { apiGet } from './perp-client.js';
 import { config } from './config.js';
 
@@ -71,22 +72,60 @@ async function pollOnce() {
 
     if (result.signal === 'NO_TRADE' || result.total < config.minScore) return;
 
+    // R:R computation
+    const lvls   = computeLevels(result);
+    const risk   = Math.abs(lvls.entry - lvls.sl);
+    const reward = Math.abs(lvls.tp1   - lvls.entry);
+    const rr     = (risk > 1e-8 && reward > 1e-8) ? reward / risk : 0;
+    result._levels = lvls;
+    result._rr     = rr > 0 ? +rr.toFixed(2) : null;
+
+    // TRADE / WATCH / IGNORE
+    const againstMacro = (result.direction === 'long'  && result.msb_direction === 'BEARISH') ||
+                         (result.direction === 'short' && result.msb_direction === 'BULLISH');
+    let capMode;
+    if (rr >= 1.5)         capMode = 'TRADE';
+    else if (!againstMacro) capMode = 'WATCH';
+    else                    capMode = 'IGNORE';
+
+    console.log(`[capitulation-watcher] mode=${capMode} R:R=${result._rr ?? 'N/A'}${againstMacro ? ' (contre-macro)' : ''}`);
+    if (capMode === 'IGNORE') return;
+
     // Set cooldown before Telegram — évite spam loop si Telegram throw
     cooldowns.set(symbol, Date.now());
 
     try {
-      const header  = buildCapitulationHeader(setup);
-      const body    = buildCombinedMessage([result]);
-      await sendTelegram(`${header}\n${body}`);
-      console.log(`[capitulation-watcher] Alerte envoyée: ${symbol} (${confidence} ${signals_fired}/3)`);
+      const modeTag  = capMode === 'WATCH'
+        ? '\n<i>⚠️ WATCH — R:R insuffisant, pas de trade automatique</i>'
+        : '';
+      const rrLine   = `R:R <b>${result._rr ?? 'N/A'}</b>  ·  Mode <b>${capMode}</b>${modeTag}`;
+      const header   = buildCapitulationHeader(setup);
+      const body     = buildCombinedMessage([result]);
+      await sendTelegram(`${header}\n${rrLine}\n\n${body}`);
+      console.log(`[capitulation-watcher] Alerte ${capMode} envoyée: ${symbol} (${confidence} ${signals_fired}/3)`);
     } catch (err) {
       console.error(`[capitulation-watcher] Telegram error ${symbol}:`, err.message);
     }
 
-    try {
-      await injectSignal(result);
-    } catch (err) {
-      console.error(`[capitulation-watcher] injectSignal ${symbol}:`, err.message);
+    // Chart — async, fail-open, uniquement si R:R ≥ 2.0
+    if (result._rr != null && result._rr >= 2.0) {
+      const dir    = result.direction === 'long' ? 'LONG' : 'SHORT';
+      const levels = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
+      captureChart(symbol, '1h', levels)
+        .then(path => {
+          if (!path) return;
+          const cap = `📊 <b>${symbol}</b> · 1H · ${dir} · 💀 Capitulation · R:R ${result._rr}`;
+          return sendTelegramPhoto(path, cap).then(() => cleanChart(path));
+        })
+        .catch(err => console.warn(`[capitulation-watcher] chart ${symbol}:`, err.message));
+    }
+
+    if (capMode === 'TRADE') {
+      try {
+        await injectSignal(result);
+      } catch (err) {
+        console.error(`[capitulation-watcher] injectSignal ${symbol}:`, err.message);
+      }
     }
   }));
 }

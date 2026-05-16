@@ -3,6 +3,8 @@ import { createHmac } from 'crypto';
 import { logTrade } from './trade-journal.js';
 import { apiGet } from './perp-client.js';
 import { loadPositions, savePositions } from './position-store.js';
+import { recordClosedTrade } from './bot-state.js';
+import { sendTelegram, fmt } from './notifier.js';
 
 const POLL_MS   = 60_000;
 const TRAIL_PCT = 0.015;           // fallback si ATR indisponible
@@ -477,6 +479,28 @@ async function pollPositions() {
           total:       pos.total ?? null,
           llm_decision: pos.llm_decision ?? null,
         }).catch(() => {});
+        // P0.4 — Circuit breaker
+        if (Number.isFinite(rawPnl)) {
+          const cbResult = recordClosedTrade(rawPnl);
+          if (cbResult.tripped) {
+            sendTelegram(`🚨 <b>Circuit Breaker déclenché</b>\n\n${cbResult.reason}\n\nBot en pause automatique.\nUtilisez /resetcb puis /resume pour reprendre.`).catch(() => {});
+          }
+        } else {
+          console.error(`[position-manager] rawPnl invalide pour CB ${symbol}: ${rawPnl}`);
+        }
+        // P0t.8 — close lifecycle notification (fail-open)
+        if (Number.isFinite(rawPnl)) {
+          const _reasonLabel = { SL: 'Stop Loss', BREAKEVEN: 'Breakeven', TRAIL: 'Trailing Stop' }[exitReason] ?? exitReason;
+          const _pnlLabel    = rawPnl >= 0 ? `+${rawPnl.toFixed(2)}` : rawPnl.toFixed(2);
+          const _gainPct     = notional > 0 ? rawPnl / notional * 100 : null;
+          const _gainStr     = _gainPct != null ? ` <i>(${_gainPct >= 0 ? '+' : ''}${_gainPct.toFixed(2)}%)</i>` : '';
+          sendTelegram([
+            `${exitReason === 'SL' ? '🔴' : '🏁'} <b>Position ${exitReason === 'SL' ? 'stoppée' : 'fermée'}</b> — <code>${symbol}</code>`,
+            `📈 <b>${pos.direction}</b> | Entrée <code>${fmt(pos.entry)}</code> → Sortie <code>${fmt(exitPrice)}</code>`,
+            `🎯 Sortie par : <b>${_reasonLabel}</b>`,
+            `💵 PnL réalisé : <b>${_pnlLabel} USDT</b>${_gainStr}`,
+          ].join('\n')).catch(err => console.error(`[Telegram] close notify ${symbol}:`, err.message));
+        }
         trackedPositions.delete(symbol);
         savePositions(trackedPositions);
         console.log(`[position-manager] CLOSED ${symbol} → ${exitReason} pnl=${rawPnl?.toFixed(2)} USDT`);
@@ -511,6 +535,14 @@ async function pollPositions() {
 
         savePositions(trackedPositions);
         console.log(`[position-manager] TP1_HIT ${symbol} — BE=${bePrice} trailing=${pos.trailingOrderId} remaining=${pos.qty_remaining}`);
+        // P0t.8 — TP1 lifecycle notification (fail-open, after SL moved)
+        sendTelegram([
+          `🎯 <b>TP1 atteint</b> — <code>${symbol}</code>`,
+          `📈 <b>${pos.direction}</b> | Entrée <code>${fmt(pos.entry)}</code>`,
+          `💰 TP1 touché : <code>${fmt(pos.tp1)}</code>`,
+          `🛡️ Stop sécurisé au breakeven : <code>${fmt(bePrice)}</code>`,
+          `🔁 Trailing actif sur le reste de la position`,
+        ].join('\n')).catch(err => console.error(`[Telegram] TP1 notify ${symbol}:`, err.message));
       }
 
       // ── Early exit sur les qty_remaining restantes ──────────────────────────
@@ -563,6 +595,21 @@ async function pollPositions() {
               total:              pos.total ?? null,
               llm_decision:       pos.llm_decision ?? null,
             }).catch(() => {});
+            // P0t.8 — early exit lifecycle notification (fail-open)
+            if (Number.isFinite(rawPnl)) {
+              const _isPanic  = earlyCheck.reason === 'EARLY_EXIT_PANIC';
+              const _title    = _isPanic ? '🚨 Sortie panique' : '⚠️ Early Exit';
+              const _pnlLabel = rawPnl >= 0 ? `+${rawPnl.toFixed(2)}` : rawPnl.toFixed(2);
+              const _gainPct  = notional > 0 ? rawPnl / notional * 100 : null;
+              const _gainStr  = _gainPct != null ? ` <i>(${_gainPct >= 0 ? '+' : ''}${_gainPct.toFixed(2)}%)</i>` : '';
+              const _signals  = earlyCheck.signals?.join(', ') || 'N/A';
+              sendTelegram([
+                `${_title} — <code>${symbol}</code>`,
+                `📈 <b>${pos.direction}</b> | Entrée <code>${fmt(pos.entry)}</code> → Sortie <code>${fmt(markPrice)}</code>`,
+                `💵 PnL réalisé : <b>${_pnlLabel} USDT</b>${_gainStr}`,
+                `📡 Signaux : <i>${_signals}</i>`,
+              ].join('\n')).catch(err => console.error(`[Telegram] early exit notify ${symbol}:`, err.message));
+            }
             trackedPositions.delete(symbol);
             savePositions(trackedPositions);
             console.log(`[position-manager] EARLY_EXIT ${symbol} @ ${markPrice} (${earlyCheck.reason}) pnl=${rawPnl?.toFixed(2)} USDT`);

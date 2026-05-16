@@ -68,8 +68,8 @@ async function pollOnce() {
     if (chatId !== String(config.telegramChatId)) continue;
 
     const applyMatch = text.match(/^\/apply_(\d+)/);
-    if (applyMatch) { await handleApplyCommand(Number(applyMatch[1])).catch(() => {}); continue; }
-    if (text.startsWith('/stats')) { await handleStatsCommand().catch(() => {}); }
+    if (applyMatch) { await handleApplyCommand(Number(applyMatch[1])).catch(err => console.error('[feedback-applier] /apply error:', err.message)); continue; }
+    if (text.startsWith('/stats')) { await handleStatsCommand().catch(err => console.error('[feedback-applier] /stats error:', err.message)); }
   }
 }
 

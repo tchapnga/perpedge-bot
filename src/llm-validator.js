@@ -95,6 +95,7 @@ async function sendTelegramFallbackAlert(symbol, failedLLMs, validCount) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+      signal:  AbortSignal.timeout(8000),
     });
     if (res.ok) {
       logLocal('info', '', '✉️  Alerte Telegram envoyée — LLMs locaux KO');

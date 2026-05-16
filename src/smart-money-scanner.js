@@ -74,10 +74,15 @@ async function scanSmartMoney() {
     try {
       await sendTelegram([
         `💎 <b>SMART MONEY</b>  ·  ${symbol}`,
+        `━━━━━━━━━━━━━━━━━━━━`,
         `Score <b>${score}/5</b>  ·  <i>${detail.join(' · ')}</i>`,
-        `Prix <code>$${Number(mark_price).toFixed(4)}</code>  ·  DCA SPOT démarré`,
+        `Prix <code>$${Number(mark_price).toFixed(4)}</code>`,
+        ``,
+        `<i>⚠️ Informationnel · DCA Spot déclenché — pas de trade perp automatique</i>`,
       ].join('\n'));
-    } catch { /* non bloquant */ }
+    } catch (err) {
+      console.error(`[smart-money] Telegram ${symbol}:`, err.message);
+    }
 
     await startDCA(symbol, Number(mark_price)).catch(err =>
       console.error(`[smart-money] startDCA ${symbol}:`, err.message)

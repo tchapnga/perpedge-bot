@@ -42,7 +42,8 @@ async function runCycle() {
     return;
   }
 
-  const now = new Date().toISOString();
+  const now  = new Date().toISOString();
+  const mode = getMode();
   console.log(`\n[${now}] ── Cycle PerpEdge ──────────────────────`);
   recordCycle();
 
@@ -114,6 +115,13 @@ async function runCycle() {
       continue;
     }
     if (v.decision === 'CONTRARIAN_FLIP') {
+      if (mode === 'LIVE') {
+        result.llm_validation = { ...v, blocked: true, blocked_reason: 'CONTRARIAN_FLIP_LIVE' };
+        result.llm_rejected   = true;
+        console.log(`[llm-validator] CONTRARIAN_FLIP blocked in LIVE — ${result.symbol} ${result.signal} rejected (quant signal preserved): ${v.reasoning}`);
+        continue;
+      }
+      // SHADOW / DRY_RUN : flip appliqué pour observation uniquement
       const flippedDir = result.direction === 'long' ? 'short' : 'long';
       result.direction = flippedDir;
       result.signal    = flippedDir === 'long' ? 'LONG' : 'SHORT';
@@ -129,21 +137,47 @@ async function runCycle() {
     return;
   }
 
+  // P1.3 — R:R minimum filter (block notification + order if R:R on TP1 < MIN_RR)
+  const MIN_RR = Number(process.env.MIN_RISK_REWARD) || 1.5;
+  const rrValidated = [];
+  for (const result of llmValidated) {
+    const lvls   = computeLevels(result);
+    const risk   = Math.abs(lvls.entry - lvls.sl);
+    const reward = Math.abs(lvls.tp1   - lvls.entry);
+    if (risk < 1e-8 || reward < 1e-8) {
+      console.log(`[rr-filter] REJETÉ ${result.symbol} — niveaux invalides (risk=${risk.toFixed(4)}, reward=${reward.toFixed(4)})`);
+      continue;
+    }
+    const rr = reward / risk;
+    if (rr < MIN_RR) {
+      console.log(`[rr-filter] REJETÉ ${result.symbol} — R:R ${rr.toFixed(2)} < min ${MIN_RR}`);
+      continue;
+    }
+    result._levels = lvls;
+    result._rr     = +rr.toFixed(2);
+    rrValidated.push(result);
+  }
+  if (!rrValidated.length) {
+    console.log('[rr-filter] Tous les signaux rejetés (R:R insuffisant) — pas de notification.');
+    return;
+  }
+
   try {
-    await sendTelegram(buildCombinedMessage(llmValidated));
-    console.log(`[notifier] Notification envoyée (${llmValidated.length} signal(s)).`);
-    for (const result of llmValidated) { setCooldown(result.symbol); recordSignal(); }
+    await sendTelegram(buildCombinedMessage(rrValidated));
+    console.log(`[notifier] Notification envoyée (${rrValidated.length} signal(s)).`);
+    for (const result of rrValidated) { setCooldown(result.symbol); recordSignal(); }
   } catch (err) {
     console.error('[notifier] Error:', err.message);
   }
 
   // Charts Lightweight — EMA 21/50 + niveaux entry/SL/TP tracés, fail-open
-  for (const result of llmValidated) {
+  for (const result of rrValidated) {
     try {
       const dir    = result.signal === 'MARKET_LONG' || result.signal === 'LONG' ? 'LONG' : 'SHORT';
-      const lvls   = computeLevels(result);
+      const lvls   = result._levels;
       const levels = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
-      const caption = `📊 <b>${result.symbol}</b> · 1H · ${dir} · Score ${result.total}/10`;
+      const rrTag   = result._rr != null ? ` · R:R ${result._rr}` : '';
+      const caption = `📊 <b>${result.symbol}</b> · 1H · ${dir} · Score ${result.total}/10${rrTag}`;
       const path   = await captureChart(result.symbol, '1h', levels);
       if (path) {
         await sendTelegramPhoto(path, caption);
@@ -155,15 +189,15 @@ async function runCycle() {
     }
   }
 
-  for (const result of llmValidated) {
+  for (const result of rrValidated) {
     try { await injectSignal(result); }
     catch (err) { console.error('[injector] Error:', err.message); }
 
     logSignal(result);
 
-    if (getMode() === 'LIVE') {
+    if (mode === 'LIVE') {
       try {
-        const levels = computeLevels(result);
+        const levels = result._levels;
         const order  = await executeOrder({
           symbol: result.symbol,
           side:   result.signal,
@@ -172,11 +206,12 @@ async function runCycle() {
         });
         result.order_result = order;
         if (order.success) {
+          if (order.partial) console.log(`[order-executor] Partial fill ${result.symbol} — qty réelle: ${order.qty}`);
           recordTrade();
           await registerTrade({
             symbol: result.symbol,
             side:   result.signal,
-            entry:  levels.entry,
+            entry:  order.price ?? levels.entry,
             sl:     levels.sl,
             tp1:    levels.tp1,
             tp2:    levels.tp2,
@@ -189,7 +224,7 @@ async function runCycle() {
         console.error(`[order-executor] Error ${result.symbol}:`, err.message);
       }
     } else {
-      console.log(`[order-executor] ${getMode()} — ordre simulé ${result.symbol} ${result.signal}`);
+      console.log(`[order-executor] ${mode} — ordre simulé ${result.symbol} ${result.signal}`);
     }
   }
 }
@@ -254,8 +289,6 @@ setTimeout(() => {
       try {
         const atr    = scored.ta?.tf_5m?.atr_14 ?? (scored.mark_price * 0.003);
         const isLong = scored.side === 'LONG';
-        const sl     = isLong  ? scored.mark_price - atr : scored.mark_price + atr;
-        const tp     = isLong  ? scored.mark_price + 2 * atr : scored.mark_price - 2 * atr;
         const order  = await executeOrder({
           symbol: scored.symbol,
           side:   scored.signal,
@@ -263,7 +296,11 @@ setTimeout(() => {
           extra:  { reduce_size: false },
         });
         if (order.success) {
-          registerScalpTrade({ symbol: scored.symbol, side: scored.signal, entry: scored.mark_price, sl, tp, qty: order.qty });
+          if (order.partial) console.log(`[scalp] Partial fill ${scored.symbol} — qty réelle: ${order.qty}`);
+          const fillPrice = order.price ?? scored.mark_price;
+          const sl = isLong  ? fillPrice - atr : fillPrice + atr;
+          const tp = isLong  ? fillPrice + 2 * atr : fillPrice - 2 * atr;
+          registerScalpTrade({ symbol: scored.symbol, side: scored.signal, entry: fillPrice, sl, tp, qty: order.qty });
         } else {
           console.error(`[scalp] ordre échoué ${scored.symbol}: ${order.error}`);
         }

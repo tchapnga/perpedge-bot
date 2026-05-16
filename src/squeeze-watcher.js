@@ -76,7 +76,8 @@ async function _runSqueezeWatch() {
     // Cooldown posé avant l'envoi Telegram — évite la spam loop si Telegram throw
     cooldowns.set(sq.symbol, { alertedAt: Date.now(), priceAtAlert: sq.mark_price, squeezeType: sq.squeeze_type });
     try {
-      await sendTelegram(buildSqueezeMessage(sq));
+      const msg = buildSqueezeMessage(sq) + '\n\n<i>⚠️ Informationnel — pas de trade automatique</i>';
+      await sendTelegram(msg);
       console.log(`[squeeze] Alerte Telegram envoyée: ${sq.symbol}`);
     } catch (err) {
       console.error(`[squeeze] Telegram error: ${err.message}`);

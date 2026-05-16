@@ -1,8 +1,9 @@
 // Crowded Unwind Watcher — ADR-4: détecte longs surendettés + capitulation OI + prix en baisse → SHORT bypass Phase 1
 import { runAnalysis } from './scorer.js';
 import { getBotState } from './bot-state.js';
-import { buildCrowdedUnwindMessage, sendTelegram } from './notifier.js';
-import { injectSignal } from './injector.js';
+import { buildCrowdedUnwindMessage, buildCombinedMessage, sendTelegram, sendTelegramPhoto } from './notifier.js';
+import { injectSignal, computeLevels } from './injector.js';
+import { captureChart, cleanChart } from './chart-capture.js';
 import { apiGet } from './perp-client.js';
 import { config } from './config.js';
 
@@ -72,8 +73,50 @@ async function pollOnce() {
 
       if (result.signal === 'NO_TRADE' || result.total < config.minScore) return;
 
-      await sendTelegram(buildCrowdedUnwindMessage(result, triggerLabel));
-      await injectSignal(result);
+      // R:R computation
+      const lvls   = computeLevels(result);
+      const risk   = Math.abs(lvls.entry - lvls.sl);
+      const reward = Math.abs(lvls.tp1   - lvls.entry);
+      const rr     = (risk > 1e-8 && reward > 1e-8) ? reward / risk : 0;
+      result._levels = lvls;
+      result._rr     = rr > 0 ? +rr.toFixed(2) : null;
+
+      // TRADE / WATCH / IGNORE
+      const againstMacro = (result.direction === 'long'  && result.msb_direction === 'BEARISH') ||
+                           (result.direction === 'short' && result.msb_direction === 'BULLISH');
+      let cwMode;
+      if (rr >= 1.5)         cwMode = 'TRADE';
+      else if (!againstMacro) cwMode = 'WATCH';
+      else                    cwMode = 'IGNORE';
+
+      console.log(`[crowded-unwind] mode=${cwMode} R:R=${result._rr ?? 'N/A'}${againstMacro ? ' (contre-macro)' : ''}`);
+      if (cwMode === 'IGNORE') return;
+
+      // Message : buildCrowdedUnwindMessage header + R:R/mode line + buildCombinedMessage
+      const modeTag = cwMode === 'WATCH'
+        ? '\n<i>⚠️ WATCH — R:R insuffisant, pas de trade automatique</i>'
+        : '';
+      const rrLine = `R:R <b>${result._rr ?? 'N/A'}</b>  ·  Mode <b>${cwMode}</b>${modeTag}`;
+      const header = buildCrowdedUnwindMessage(result, triggerLabel);
+      const msg    = header + '\n' + rrLine + '\n\n' + buildCombinedMessage([result]);
+
+      await sendTelegram(msg);
+      console.log(`[crowded-unwind] Notification ${cwMode} envoyée — ${symbol}`);
+
+      // Chart — async, fail-open, uniquement si R:R ≥ 2.0
+      if (result._rr != null && result._rr >= 2.0) {
+        const dir    = result.direction === 'long' ? 'LONG' : 'SHORT';
+        const levels = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
+        captureChart(symbol, '1h', levels)
+          .then(path => {
+            if (!path) return;
+            const cap = `📊 <b>${symbol}</b> · 1H · ${dir} · 🔻 Crowded Unwind · R:R ${result._rr}`;
+            return sendTelegramPhoto(path, cap).then(() => cleanChart(path));
+          })
+          .catch(err => console.warn(`[crowded-unwind] chart ${symbol}:`, err.message));
+      }
+
+      if (cwMode === 'TRADE') await injectSignal(result);
     } catch (err) {
       console.error(`[crowded-unwind] Analyse ${symbol} échouée:`, err.message);
     }

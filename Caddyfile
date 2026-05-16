@@ -1,0 +1,30 @@
+# /etc/caddy/Caddyfile
+83.228.242.106.nip.io {
+    encode gzip
+
+    handle /admin/* {
+        reverse_proxy localhost:3002
+    }
+
+    handle /api/* {
+        reverse_proxy localhost:3001
+    }
+
+    handle {
+        root * /home/ubuntu/perpedge-miniapp/dist
+        try_files {path} /index.html
+        file_server
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    }
+}
+
+:80 {
+    redir https://83.228.242.106.nip.io{uri} permanent
+}

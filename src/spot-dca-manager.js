@@ -57,7 +57,9 @@ export async function startDCA(symbol, markPrice) {
 
   try {
     await sendTelegram(buildDCAMessage(symbol, tranches, state.totalSpent, state.avgPrice));
-  } catch { /* Telegram non bloquant */ }
+  } catch (err) {
+    console.error(`[spot-dca] Telegram ${symbol}:`, err.message);
+  }
 }
 
 export async function cancelDCA(symbol) {
@@ -65,7 +67,7 @@ export async function cancelDCA(symbol) {
   if (!state) return;
   for (const t of state.tranches) {
     if (!t.filled && t.orderId) {
-      await cancelSpotOrder(symbol, t.orderId).catch(() => {});
+      await cancelSpotOrder(symbol, t.orderId).catch(err => console.warn(`[spot-dca] cancel ${symbol}:`, err.message));
     }
   }
   activeDCA.delete(symbol);

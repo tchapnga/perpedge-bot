@@ -6,7 +6,7 @@ import path                    from 'node:path';
 import { config }               from './config.js';
 import {
   getBotState, isPaused, isEmergencyStopped,
-  setPaused, setEmergencyStop, resetEmergencyStop,
+  setPaused, setEmergencyStop, resetEmergencyStop, resetCircuitBreaker,
 } from './bot-state.js';
 import { reconcilePositions, checkStability } from './position-manager.js';
 import { readAllTrades }      from './trade-journal.js';
@@ -138,7 +138,7 @@ export function startTelegramBot() {
   // ── /start ────────────────────────────────────────────────────────────────
   bot.command('start', async (ctx) => {
     await ctx.reply(
-      `👋 <b>PerpEdge Admin Bot</b>\n\nCommandes disponibles :\n/status — état du bot\n/pause — pause nouvelles entrées\n/resume — reprendre\n/stop — arrêt d'urgence\n/testnet — basculer en TESTNET (si stable)\n/mainnet — basculer en MAINNET (si stable)\n/reconcile — réconciliation positions\n/export — export CSV des trades`,
+      `👋 <b>PerpEdge Admin Bot</b>\n\nCommandes disponibles :\n/status — état du bot\n/pause — pause nouvelles entrées\n/resume — reprendre\n/stop — arrêt d'urgence\n/resetcb — réarmer le circuit breaker\n/testnet — basculer en TESTNET (si stable)\n/mainnet — basculer en MAINNET (si stable)\n/reconcile — réconciliation positions\n/export — export CSV des trades`,
       { parse_mode: 'HTML' }
     );
   });
@@ -164,8 +164,27 @@ export function startTelegramBot() {
       await ctx.reply('⚠️ Emergency Stop actif — utilisez /reset_emergency d\'abord.', { parse_mode: 'HTML' });
       return;
     }
+    const st = getBotState();
+    if (st.circuitBreaker) {
+      await ctx.reply(`⚠️ <b>Circuit Breaker actif</b>\n\n${st.circuitBreakerReason}\n\nUtilisez /resetcb d'abord, puis /resume.`, { parse_mode: 'HTML' });
+      return;
+    }
     setPaused(false);
     await ctx.reply('▶ Bot repris.', { parse_mode: 'HTML' });
+  });
+
+  // ── /resetcb — réarmement manuel du circuit breaker ──────────────────────
+  bot.command('resetcb', async (ctx) => {
+    const st = getBotState();
+    if (!st.circuitBreaker) {
+      await ctx.reply('ℹ️ Circuit Breaker non actif — aucune action.', { parse_mode: 'HTML' });
+      return;
+    }
+    resetCircuitBreaker();
+    await ctx.reply(
+      `🔄 <b>Circuit Breaker réinitialisé.</b>\n\nRaison précédente : ${st.circuitBreakerReason}\n\n<b>Le bot reste en PAUSE.</b> Envoyez /resume pour reprendre les cycles.`,
+      { parse_mode: 'HTML' }
+    );
   });
 
   // ── /stop (Emergency Stop) ────────────────────────────────────────────────

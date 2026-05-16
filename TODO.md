@@ -51,6 +51,46 @@
 
 ---
 
+## P0-ter — Améliorations Scorer / Executor (session 2026-05-16)
+> Protocole multi-LLM appliqué (ChatGPT + DeepSeek + Gemini consultés avant chaque impl).
+
+| ID | Tâche | Fichier | Statut |
+|---|---|---|---|
+| P0t.1 | LIMIT GTC orders avec cancel auto 3min + bookTicker price + polling fill | order-executor.js | `[✓]` testnet PASS |
+| P0t.2 | Dynamic position sizing : RISK_PCT% × availableBalance (fallback v3→v2 balance) + BELOW_MIN_NOTIONAL gate | order-executor.js | `[✓]` testnet PASS |
+| P0t.3 | LEVERAGE env var (défaut 20, modifiable) | order-executor.js / .env | `[✓]` |
+| P0t.4 | Gate 7 — Funding VETO extrême : LONG+funding>0.15% ou SHORT+funding<-0.15% → hard block | scorer.js | `[✓]` ChatGPT+DeepSeek+Gemini consensus |
+| P0t.5 | P1.2 — PENDING state : redondant avec cron 15min — supprimé | — | `[✗]` |
+| P0t.6 | P1.3 — Filtre R:R minimum TP1 ≥ 1.5 : bloque notification + ordre (avant sendTelegram). computeLevels() cachée dans result._levels | index.js | `[✓]` ChatGPT+DeepSeek+Gemini consensus |
+| P0t.7 | P2 — Enrichir message Telegram : R:R + SL dist% + TP2 (taille USD/slippage/equity omis — balance inconnue à notif time) + R:R dans caption photo | notifier.js / index.js | `[✓]` ChatGPT+DeepSeek+Gemini consensus |
+| P0t.8 | P-NOTIFY — Lifecycle trade notifications : TP1 hit, SL/BREAKEVEN/TRAIL, early exit (+ panic). fmt() exporté de notifier.js. gainPct % affiché. fail-open + console.error | position-manager.js / notifier.js | `[✓]` ChatGPT+DeepSeek+Gemini consensus |
+
+---
+
+## P0-quad — Revue exhaustive des 14 types de signaux Telegram
+> Priorité actuelle (2026-05-17). Examiner et améliorer chaque type de signal avant de passer à P-ROBUSTNESS et P9.
+> Protocole : multi-LLM obligatoire avant chaque impl. Ordre fixé par l'utilisateur.
+
+| ID | Signal | Fichier | Statut |
+|---|---|---|---|
+| P0q.1 | buildCombinedMessage — signal principal cycle 15min | notifier.js / index.js | `[✓]` P0t.7 |
+| P0q.2 | Chart photo + caption (R:R) | index.js / chart-capture.js | `[✓]` P0t.7 |
+| P0q.3 | ⚡ OI EXPLOSION + buildMessage | oi-watcher.js | `[✓]` buildCombinedMessage + R:R TRADE/WATCH/IGNORE + classifyOiMove + chart async R:R≥2 |
+| P0q.4 | 🔻 CROWDED UNWIND + score + TP/SL | crowded-unwind-watcher.js / notifier.js | `[✓]` R:R TRADE/WATCH/IGNORE + buildCrowdedUnwindMessage header + buildCombinedMessage + chart async R:R≥2. LLM SKIP (Gemini tiebreak) |
+| P0q.5 | 🚀 SHORT/LONG SQUEEZE + funding + OI + CVD + liquidations | squeeze-watcher.js / notifier.js | `[✓]` Signal informatif pur — ajout footer ⚠️. No runAnalysis, no LLM, no chart, no auto-trade (consensus 3 LLMs) |
+| P0q.6 | Header capitulation + buildCombinedMessage | capitulation-watcher.js | `[✓]` Pattern P0q.4 appliqué : R:R TRADE/WATCH/IGNORE + computeLevels + chart async R:R≥2. LLM SKIP. Gemini : "100% compatible" |
+| P0q.7 | 💎 SMART MONEY + score/5 + détail | smart-money-scanner.js | `[✓]` Signal spot DCA — pas de R:R perp (no runAnalysis). Séparateur + footer ⚠️ + fix catch silencieux |
+| P0q.8 | Message DCA spot confirmé — tranches + prix moyen | spot-dca-manager.js | `[✓]` Incompatible R:R perp (Gemini). buildDCAMessage OK. Fix catch silencieux → console.error |
+| P0q.9 | ⚠️ CRASH + stack trace (PM2 restart) | crash-notifier.js | `[✓]` P9B.5 |
+| P0q.10 | Alerte LLM fallback (Chrome verrouillé / < 2 LLMs) | llm-validator.js | `[✓]` Déjà implémenté : sendTelegramFallbackAlert() appelé sur 2 cas. Fix AbortSignal.timeout(8000) ajouté |
+| P0q.11 | 📊 Rapport quotidien 08:00 UTC | daily-reporter.js | `[✓]` Déjà complet (trades, winrate, PnL net, best/worst) |
+| P0q.12 | Rapport hebdo feedback + recommandations (dimanche 08:00 UTC) | feedback-analyzer.js | `[✓]` Déjà complet (PnL, espérance, exits, top scans, score moyen) |
+| P0q.13 | /stats — win rate, PnL, nb trades | feedback-applier.js | `[✓]` Déjà complet. Fix catch silencieux → console.error |
+| P0q.14 | /apply_N — confirmation recommandation appliquée | feedback-applier.js | `[✓]` Déjà complet. Fix catch silencieux → console.error |
+| P0q.15 | Lifecycle scalp (TP/SL scalp-manager.js) | scalp-manager.js | `[✓]` TP/SL/T+10 notifications ajoutées. PnL estimé (markPrice au moment du hit). fail-open |
+
+---
+
 ## P0-bis — Prompt Engineering LLM
 > Session dédiée. Critique pour P1.
 
@@ -241,6 +281,7 @@
 
 | ID | Tâche | Statut |
 |---|---|---|
+| P8E.0 | Page Settings mini-app : sliders/inputs `LEVERAGE`, `RISK_PCT`, `POSITION_SIZE_USDT` — `PATCH /admin/config` pour persister (extend P8C.7) | `[ ]` |
 | P8E.1 | Position reconciliation : compare état bot vs Binance API → alerte si désync | `[✓]` |
 | P8E.2 | Trading mode switcher : LIVE / SHADOW (signaux sans exécution) / DRY_RUN | `[✓]` |
 | P8E.3 | Strategy on/off : activer/désactiver scalp, capitulation, smart-money à chaud | `[✓]` |
@@ -625,6 +666,27 @@ Voir tableau P8-E ci-dessus (P8E.1 à P8E.6).
 > **Inconvénients :** coût par token sur 3 APIs, clés supplémentaires à gérer.
 >
 > **Décision en attente** — soumettre aux 4 LLMs avant implémentation. En attendant : Claude API seul en prod, Playwright local uniquement.
+
+---
+
+### [ ] P-NOTIFY — Notifications Telegram cycle de vie des trades ⚠️ CRITIQUE
+
+> **Contexte :** `position-manager.js` logue tous les événements dans `trade_journal.jsonl` mais n'envoie **aucune notification Telegram** lors des événements critiques de gestion de position. L'utilisateur ne sait pas en temps réel ce qui se passe sur ses trades ouverts.
+>
+> **Impact :** trade TP1 atteint → trailing activé → SL hit → position fermée, tout ça en silence.
+> **Fichier principal :** `src/position-manager.js` · utiliser `bot.pushAlert()` (déjà disponible via `src/telegram-bot.js` P8B.5)
+>
+> **Travaux à faire (protocole multi-LLM) :**
+
+| ID | Événement | Détail du message Telegram | Statut |
+|---|---|---|---|
+| PN.1 | TP1 touché (50% fermé) | `🎯 TP1 {symbol} {side}` — 50% fermé @{price}, trailing activé, SL → breakeven {be_price}, PnL partiel {pnl} USDT | `[ ]` |
+| PN.2 | SL touché (perte) | `🔴 SL {symbol} {side}` — Position clôturée @{price}, PnL final {pnl} USDT, raison : SL_HIT | `[ ]` |
+| PN.3 | TP2 / Trailing stop exécuté (gain) | `✅ TP2 {symbol} {side}` — Position clôturée @{price}, PnL final {pnl} USDT, raison : TRAILING_STOP | `[ ]` |
+| PN.4 | Early exit déclenché | `⚡ EXIT ANTICIPE {symbol} {side}` — Score early_exit={score}/9, raison : {reason}, PnL {pnl} USDT | `[ ]` |
+| PN.5 | Breakeven activé | `🛡️ BREAKEVEN {symbol} {side}` — SL déplacé à {be_price} (entrée ±frais), risque annulé | `[ ]` |
+
+> **Prérequis :** passer en revue `position-manager.js` avec 4 LLMs avant implémentation — identifer les hooks exacts (après `cancelAllAlgoOrders`, après `recordClose`, etc.)
 
 ---
 

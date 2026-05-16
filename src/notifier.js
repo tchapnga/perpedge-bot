@@ -12,7 +12,7 @@ const TREND_DOT = { BULLISH: '🟢', BEARISH: '🔴', NEUTRAL: '⚪', SIDEWAYS: 
 
 function trendDot(t) { return TREND_DOT[t] ?? '⚪'; }
 
-function fmt(n) { return n < 0.01 ? n.toPrecision(4) : n.toFixed(4); }
+export function fmt(n) { return n < 0.01 ? n.toPrecision(4) : n.toFixed(4); }
 
 function computeNotifLevels(result) {
   const close   = result.ta.tf_1h.close;
@@ -64,7 +64,7 @@ export function buildMessage(result) {
   const lines = [
     `${dirEmoji} <b>${dirLabel} · ${symbol}</b>`,
     `━━━━━━━━━━━━━━━━━━━━`,
-    `⭐ Score <b>${total} / 10</b>  <i>TA ${ta_score} · DER ${der_score}</i>  ${forceEmoji} <b>${force}</b>`,
+    `⭐ Score <b>${total} / 10</b>  <i>Technique ${ta_score} · Dérivés ${der_score}</i>  ${forceEmoji} <b>${force}</b>`,
     ``,
     `<b>${entryLabel}</b>`,
     `🎯 TP  <b>$${fmt(tp)}</b>  <i>(+${tpPct}%)</i>`,
@@ -78,7 +78,7 @@ export function buildMessage(result) {
     ``,
     `<b>Dérivés</b>`,
     `├ Funding 8h  <code>${funding}</code>`,
-    `├ OI Δ1h      <code>${oi1h}</code>`,
+    `├ Intérêt ouvert 1h  <code>${oi1h}</code>`,
     `└ Carnet      ${obEmoji} ${obSignal}`,
   ];
 
@@ -122,6 +122,9 @@ export function buildCombinedMessage(results) {
     const funding    = der.snapshot?.funding_rate_pct_8h ?? 'N/A';
     const oi1h       = der.oi1h?.oi_change_pct != null ? der.oi1h.oi_change_pct.toFixed(2) + '%' : 'N/A';
     const { entry, sl, tp } = computeNotifLevels(result);
+    const tp2        = result._levels?.tp2;
+    const rr         = result._rr;
+    const slDistPct  = Math.abs((entry - sl) / entry * 100).toFixed(2);
     const num        = NUMBERS[i] ?? `${i + 1}.`;
 
     const extraLines = [];
@@ -136,11 +139,26 @@ export function buildCombinedMessage(results) {
       extraLines.push(`   ✅ Ordre #${result.order_result.orderId} ${result.order_result.qty}@${result.order_result.price}`);
     }
 
+    const tp2Line = tp2 != null ? `  ·  TP2 $${fmt(tp2)}` : '';
+    const rrLine  = [
+      rr != null ? `R:R <b>${rr}</b>` : null,
+      `SL dist ${slDistPct}%`,
+    ].filter(Boolean).join('  ·  ');
+
+    // "Pourquoi validé" — top 2 TA positifs + 1 DER positif
+    const whyTA  = (result.ta_detail  ?? []).filter(d => d && !d.includes('N/A')).slice(0, 2);
+    const whyDER = (result.der_detail ?? []).filter(d => d && !d.includes('N/A')).slice(0, 1);
+    const whyItems = [...whyTA, ...whyDER];
+    if (whyItems.length > 0) {
+      extraLines.push(`   ✅ <b>Pourquoi validé</b>  <i>${whyItems.join('  ·  ')}</i>`);
+    }
+
     return [
-      `${num} ${dirEmoji} <b>${dirLabel} · ${symbol}</b>  ${forceEmoji} <b>${total}/10</b>  <i>TA ${ta_score} · DER ${der_score}</i>`,
-      `   <b>$${fmt(entry)}</b>  ·  TP $${fmt(tp)}  ·  SL $${fmt(sl)}`,
+      `${num} ${dirEmoji} <b>${dirLabel} · ${symbol}</b>  ${forceEmoji} <b>${total}/10</b>  <i>Technique ${ta_score} · Dérivés ${der_score}</i>`,
+      `   Entry <b>$${fmt(entry)}</b>  ·  TP1 $${fmt(tp)}${tp2Line}  ·  SL $${fmt(sl)}`,
+      `   ${rrLine}`,
       ...extraLines,
-      `   Funding <code>${funding}</code>  ·  OI Δ1h <code>${oi1h}</code>`,
+      `   Funding 8h <code>${funding}</code>  ·  Intérêt ouvert 1h <code>${oi1h}</code>`,
     ].join('\n');
   });
 

@@ -373,6 +373,20 @@ export async function runAnalysis(symbol, scans = []) {
     }
   }
 
+  // Gate 7: Funding extrême contre le signal → hard veto (P1.1)
+  const FUNDING_VETO_RATE = (Number(process.env.FUNDING_VETO_PCT) || 0.15) / 100;
+  const fundingForVeto = Number.isFinite(Number(der?.snapshot?.funding_rate))
+    ? Number(der.snapshot.funding_rate) : null;
+  if (!gateBlock && fundingForVeto !== null) {
+    const fundingVeto =
+      (taResult.direction === 'long'  && fundingForVeto >  FUNDING_VETO_RATE) ||
+      (taResult.direction === 'short' && fundingForVeto < -FUNDING_VETO_RATE);
+    if (fundingVeto) {
+      gateBlock  = true;
+      gateReason = `Funding veto: ${taResult.direction} — ${(fundingForVeto * 100).toFixed(4)}% dépasse seuil ±${(FUNDING_VETO_RATE * 100).toFixed(2)}%`;
+    }
+  }
+
   const rejected  = hardFloor || taLowFloor || gateBlock;
   const force     = rejected ? 'REJETÉ' : total >= 7.0 ? 'FORT' : total >= 5.0 ? 'MODÉRÉ' : 'REJETÉ';
   const inVoid    = ta.sr.price_vs_sr === 'in_void';

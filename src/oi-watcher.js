@@ -1,13 +1,15 @@
 // OI Explosion Watcher — polling REST 60s sur watchlist, déclenche Phase 2+3 event-driven
 import { runAnalysis } from './scorer.js';
 import { getBotState } from './bot-state.js';
-import { buildMessage, sendTelegram } from './notifier.js';
-import { injectSignal } from './injector.js';
+import { buildCombinedMessage, sendTelegram, sendTelegramPhoto } from './notifier.js';
+import { injectSignal, computeLevels } from './injector.js';
+import { captureChart, cleanChart } from './chart-capture.js';
 import { apiGet } from './perp-client.js';
 import { config } from './config.js';
 
 const OI_5M_THRESHOLD_PCT  = 2.0;    // >2% sur 5min → déclenche analyse
 const OI_15M_THRESHOLD_PCT = 5.0;    // >5% sur 15min → déclenche analyse
+const OI_WATCH_MULTIPLIER  = 2.0;    // WATCH mode : OI ≥ 2× le seuil normal requis
 const POLL_INTERVAL_MS     = 60_000; // poll OI toutes les 60s
 const COOLDOWN_MS          = 10 * 60_000; // 10min entre deux analyses du même token
 const MAX_HISTORY_MS       = 20 * 60_000; // buffer de 20min max
@@ -54,6 +56,16 @@ function getOiAtAge(history, maxAgeMs) {
 function pruneHistoryInPlace(hist) {
   const cutoff = Date.now() - MAX_HISTORY_MS;
   while (hist.length > 0 && hist[0].ts < cutoff) hist.shift();
+}
+
+// Matrice OI × Prix → interprétation institutionnelle
+function classifyOiMove(oiDelta, trend) {
+  const oiUp    = oiDelta > 0;
+  const priceUp = trend === 'BULLISH';
+  if (oiUp  &&  priceUp) return 'Long Buildup';
+  if (oiUp  && !priceUp) return 'Short Buildup';
+  if (!oiUp &&  priceUp) return 'Short Squeeze';
+  return 'Long Squeeze';
 }
 
 async function pollOnce() {
@@ -105,8 +117,61 @@ async function pollOnce() {
 
       if (result.signal === 'NO_TRADE' || result.total < config.minScore) return;
 
-      await sendTelegram(`⚡ <b>OI EXPLOSION</b> · ${label}\n` + buildMessage(result));
-      await injectSignal(result);
+      // R:R computation
+      const lvls   = computeLevels(result);
+      const risk   = Math.abs(lvls.entry - lvls.sl);
+      const reward = Math.abs(lvls.tp1   - lvls.entry);
+      const rr     = (risk > 1e-8 && reward > 1e-8) ? reward / risk : 0;
+      result._levels = lvls;
+      result._rr     = rr > 0 ? +rr.toFixed(2) : null;
+
+      // OI direction × prix → interprétation
+      const oiDelta  = delta5m ?? delta15m ?? 0;
+      const trend    = result.ta?.tf_1h?.trend ?? 'NEUTRAL';
+      const oiInterp = classifyOiMove(oiDelta, trend);
+
+      // WATCH / TRADE / IGNORE
+      const againstMacro = (result.direction === 'long'  && result.msb_direction === 'BEARISH') ||
+                           (result.direction === 'short' && result.msb_direction === 'BULLISH');
+      const oiMassif = Math.abs(oiDelta) >= OI_5M_THRESHOLD_PCT * OI_WATCH_MULTIPLIER ||
+                       (delta15m != null && Math.abs(delta15m) >= OI_15M_THRESHOLD_PCT * OI_WATCH_MULTIPLIER);
+
+      let oiMode;
+      if (rr >= 1.5)                    oiMode = 'TRADE';
+      else if (!againstMacro && oiMassif) oiMode = 'WATCH';
+      else                               oiMode = 'IGNORE';
+
+      console.log(`[oi-watcher] mode=${oiMode} R:R=${result._rr ?? 'N/A'} interp=${oiInterp}${againstMacro ? ' (contre-macro)' : ''}`);
+      if (oiMode === 'IGNORE') return;
+
+      // Message : header OI custom + buildCombinedMessage
+      const watchTag = oiMode === 'WATCH' ? '⚠️ ' : '';
+      const modeTag  = oiMode === 'WATCH'
+        ? '\n<i>⚠️ WATCH — R:R insuffisant, pas de trade automatique</i>'
+        : '';
+      const headerOI = [
+        `⚡ <b>${watchTag}OI EXPLOSION</b> · ${symbol}  <i>(${label})</i>`,
+        `<code>${oiInterp}</code>  ·  R:R <b>${result._rr ?? 'N/A'}</b>${modeTag}`,
+      ].join('\n');
+      const msg = headerOI + '\n\n' + buildCombinedMessage([result]);
+
+      await sendTelegram(msg);
+      console.log(`[oi-watcher] Notification ${oiMode} envoyée — ${symbol}`);
+
+      // Chart — async, fail-open, uniquement si R:R ≥ 2.0
+      if (result._rr != null && result._rr >= 2.0) {
+        const dir    = result.direction === 'long' ? 'LONG' : 'SHORT';
+        const levels = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
+        captureChart(symbol, '1h', levels)
+          .then(path => {
+            if (!path) return;
+            const cap = `📊 <b>${symbol}</b> · 1H · ${dir} · ⚡ OI · R:R ${result._rr}`;
+            return sendTelegramPhoto(path, cap).then(() => cleanChart(path));
+          })
+          .catch(err => console.warn(`[oi-watcher] chart ${symbol}:`, err.message));
+      }
+
+      if (oiMode === 'TRADE') await injectSignal(result);
     } catch (err) {
       console.error(`[oi-watcher] Analyse ${symbol} échouée:`, err.message);
     }
