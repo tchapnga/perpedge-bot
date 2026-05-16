@@ -1,9 +1,19 @@
-# bot-control.ps1 — Contrôle du bot PerpEdge sur le VPS
+﻿# bot-control.ps1 — Contrôle du bot PerpEdge sur le VPS
 # Usage : double-clic sur bot-control.bat, ou : pwsh .\scripts\bot-control.ps1
 
 # ── Encodage UTF-8 (affichage correct des accents) ──────────────────────────
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding            = [System.Text.Encoding]::UTF8
+
+# ── Garde la fenêtre ouverte si une erreur non gérée se produit ──────────────
+trap {
+    Write-Host ""
+    Write-Host "ERREUR INATTENDUE : $_" -ForegroundColor Red
+    Write-Host $_.ScriptStackTrace -ForegroundColor DarkRed
+    Write-Host ""
+    Read-Host "Appuie sur Entrée pour fermer"
+    exit 1
+}
 
 $VPS_HOST = "83.228.242.106"
 $VPS_USER = "ubuntu"
@@ -105,7 +115,7 @@ if ($choice -eq "2" -or $choice -eq "3") {
     Start-Sleep -Seconds 5
     Write-Host ""
     Write-Host "Vérification des logs..." -ForegroundColor Cyan
-    $logs = SSH-Run "pm2 logs perpedge-bot --lines 10 --nostream 2>&1 | grep -iE '(TESTNET|MAINNET|Démarré|error|crash)'"
+    $logs = SSH-Run "pm2 logs perpedge-bot --lines 10 --nostream 2>&1 | grep -iE '(TESTNET|MAINNET|Started|Demarre|error|crash)'"
     Write-Host ($logs -join "`n")
 
     Show-Footer "Bot rechargé en $targetEnv"
@@ -200,7 +210,7 @@ Write-Host ($pm2Out -join "`n")
 Start-Sleep -Seconds 5
 Write-Host ""
 Write-Host "Vérification des logs..." -ForegroundColor Cyan
-$logs = SSH-Run "pm2 logs perpedge-bot --lines 10 --nostream 2>&1 | grep -iE '(TESTNET|MAINNET|Démarré|error|crash)'"
+$logs = SSH-Run "pm2 logs perpedge-bot --lines 10 --nostream 2>&1 | grep -iE '(TESTNET|MAINNET|Started|Demarre|error|crash)'"
 Write-Host ($logs -join "`n")
 
 Show-Footer "Bot rechargé en $envLabel"
