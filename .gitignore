@@ -43,6 +43,7 @@ chatgpt-*.yml
 chatgpt-*.txt
 gemini-*.yml
 gemini-*.txt
+deepseek-*.yml
 deepseek-*.txt
 
 # TypeScript build info
