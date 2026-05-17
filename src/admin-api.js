@@ -338,21 +338,29 @@ export async function startAdminApi() {
     return { ok: true, command, state: getBotState() };
   });
 
-  // ── Manual analyze — FIX: timeout 30s ────────────────────────────────────
+  // ── Manual analyze ────────────────────────────────────────────────────────
   app.post('/admin/analyze', async (req, reply) => {
     const { symbol } = req.body ?? {};
     if (!symbol) return reply.code(400).send({ error: 'symbol required' });
-    await audit('ANALYZE', req.adminUserId, { symbol });
+    const sym = String(symbol).toUpperCase().trim();
+    // Validate symbol against known PERP list
+    const syms = await _getSymbols().catch(() => []);
+    if (syms.length > 0 && !syms.includes(sym)) {
+      const auto = syms.find(s => s === sym + 'USDT') ?? null;
+      if (!auto) return reply.code(400).send({ error: `Symbole inconnu : ${sym}. Exemple : ETHUSDT` });
+      return reply.code(400).send({ error: `Symbole inconnu : ${sym}. Vouliez-vous dire ${auto} ?` });
+    }
+    await audit('ANALYZE', req.adminUserId, { symbol: sym });
     const timeout = new Promise((_, rej) =>
       setTimeout(() => rej(new Error('TIMEOUT')), 30_000)
     );
     try {
       const { runAnalysis }    = await import('./scorer.js');
       const { validateSignal } = await import('./llm-validator.js');
-      const result = await Promise.race([runAnalysis(symbol, []), timeout]);
-      if (result.signal === 'NO_TRADE') return { symbol, signal: 'NO_TRADE', total: result.total ?? 0, result };
+      const result = await Promise.race([runAnalysis(sym, []), timeout]);
+      if (result.signal === 'NO_TRADE') return { symbol: sym, signal: 'NO_TRADE', total: result.total ?? 0, result };
       const v = await Promise.race([validateSignal(result), timeout]);
-      return { symbol, signal: result.signal, total: result.total, llm: v, result };
+      return { symbol: sym, signal: result.signal, total: result.total, llm: v, result };
     } catch (err) {
       const status = err.message === 'TIMEOUT' ? 504 : 500;
       return reply.code(status).send({ error: err.message });

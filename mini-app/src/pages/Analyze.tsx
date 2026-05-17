@@ -146,29 +146,49 @@ export default function Analyze(): JSX.Element {
   const { isOperator } = useMyRole();
 
   // ── Shared state ──────────────────────────────────────────────────────────
-  const [symbol, setSymbol]         = useState("");
-  const [result, setResult]         = useState<AnalyzeResult | null>(null);
-  const [analyzeError, setErr]      = useState<string | null>(null);
-  const [isAnalyzing, setAnalyzing] = useState(false);
-  const [activeTab, setActiveTab]   = useState("quant");
+  const [symbol, setSymbol]           = useState("");
+  const [showDrop, setShowDrop]       = useState(false);
+  const [result, setResult]           = useState<AnalyzeResult | null>(null);
+  const [analyzeError, setErr]        = useState<string | null>(null);
+  const [isAnalyzing, setAnalyzing]   = useState(false);
+  const [activeTab, setActiveTab]     = useState("quant");
 
   const sym = useMemo(() => normalizeSymbol(symbol), [symbol]);
 
   const { data: suggestions } = useSWR(
     sym.length >= 1 ? ["symbols", sym] : null,
     () => searchSymbols(sym),
-    { keepPreviousData: true, dedupingInterval: 500 }
+    { keepPreviousData: true, dedupingInterval: 400 }
   );
+
+  const selectSymbol = (s: string) => {
+    setSymbol(s);
+    setShowDrop(false);
+  };
 
   const runAnalysis = async () => {
     if (!sym) return;
+    // Auto-complete: if typed value not in suggestions, pick the best match
+    let finalSym = sym;
+    if (suggestions && suggestions.length > 0 && !suggestions.includes(sym)) {
+      const usdt = suggestions.find(s => s === sym + "USDT");
+      finalSym = usdt ?? suggestions[0] ?? sym;
+      setSymbol(finalSym);
+    }
+    setShowDrop(false);
     try {
       setAnalyzing(true); setErr(null); setResult(null);
-      setResult(await analyzeSymbol(sym, 30000));
+      setResult(await analyzeSymbol(finalSym, 30000));
     } catch (e) {
-      setErr(e instanceof DOMException && e.name === "AbortError"
-        ? "Timeout — l'analyse a dépassé 30 secondes."
-        : e instanceof Error ? e.message : "Erreur inconnue.");
+      if (e instanceof DOMException && e.name === "AbortError") {
+        setErr("Timeout — l'analyse a dépassé 30 secondes.");
+      } else if (e instanceof Error) {
+        // Strip technical API prefix, show only the useful part
+        const msg = e.message.replace(/^API POST \/admin\/analyze failed: \d+ — /, "");
+        try { setErr(JSON.parse(msg).error ?? msg); } catch { setErr(msg); }
+      } else {
+        setErr("Erreur inconnue.");
+      }
     } finally { setAnalyzing(false); }
   };
 
@@ -319,16 +339,30 @@ export default function Analyze(): JSX.Element {
         <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
         <Input
           value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && runAnalysis()}
+          onChange={(e) => { setSymbol(e.target.value); setShowDrop(true); }}
+          onFocus={() => setShowDrop(true)}
+          onBlur={() => setTimeout(() => setShowDrop(false), 150)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") runAnalysis();
+            if (e.key === "Escape") setShowDrop(false);
+          }}
           placeholder="BTCUSDT, ETHUSDT, SOLUSDT…"
           className="pl-9"
-          list="symbols-ac"
           autoComplete="off"
         />
-        <datalist id="symbols-ac">
-          {suggestions?.map((s) => <option key={s} value={s} />)}
-        </datalist>
+        {showDrop && suggestions && suggestions.length > 0 && (
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+            {suggestions.slice(0, 6).map((s) => (
+              <button
+                key={s}
+                className="w-full px-4 py-2.5 text-left text-sm font-mono hover:bg-muted/60 active:bg-muted"
+                onMouseDown={(e) => { e.preventDefault(); selectSymbol(s); }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <Button onClick={runAnalysis} disabled={!sym || isAnalyzing} className="w-full">
