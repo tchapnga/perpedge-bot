@@ -13,7 +13,7 @@ process.on('unhandledRejection', (reason) => {
 });
 import { runPhase1 } from './src/scanner.js';
 import { runAnalysis } from './src/scorer.js';
-import { buildCombinedMessage, sendTelegram, sendTelegramPhoto } from './src/notifier.js';
+import { buildCombinedMessage, sendTelegram, sendTelegramPhoto, fmt } from './src/notifier.js';
 import { captureChart, cleanChart } from './src/chart-capture.js';
 import { injectSignal, computeLevels } from './src/injector.js';
 import { executeOrder } from './src/order-executor.js';
@@ -297,6 +297,11 @@ setTimeout(() => {
           const fillPrice = order.price ?? scored.mark_price;
           const sl = isLong  ? fillPrice - atr : fillPrice + atr;
           const tp = isLong  ? fillPrice + 2 * atr : fillPrice - 2 * atr;
+          sendTelegram([
+            `⚡ <b>Scalp ENTRÉE</b> — <code>${scored.symbol}</code>`,
+            `📈 <b>${scored.signal}</b> | <code>${fmt(fillPrice)}</code> | Score <b>${scored.total}/10</b>`,
+            `🎯 TP <code>${fmt(tp)}</code> | 🛑 SL <code>${fmt(sl)}</code> | T+10`,
+          ].join('\n')).catch(() => {});
           registerScalpTrade({ symbol: scored.symbol, side: scored.signal, entry: fillPrice, sl, tp, qty: order.qty });
         } else {
           console.error(`[scalp] ordre échoué ${scored.symbol}: ${order.error}`);
