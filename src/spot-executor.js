@@ -1,4 +1,5 @@
 import { createHmac } from 'crypto';
+import { isSpotTradingBlocked, isTestnet, isSpotLiveAllowed } from './utils/guards.js';
 
 const SPOT_BASE_URL  = 'https://api.binance.com';
 const SPOT_API_KEY   = process.env.BINANCE_SPOT_API_KEY?.trim()   || process.env.BINANCE_API_KEY?.trim();
@@ -49,6 +50,13 @@ function floorToStep(qty, step) {
 }
 
 export async function placeSpotBuy({ symbol, quoteAmount, limitPrice = null }) {
+  // Guard terminal — dernier rempart avant ordre réel (consensus 3/3 LLMs 2026-05-17)
+  // Binance Spot n'a pas de testnet : tout appel ici est PRODUCTION.
+  if (isSpotTradingBlocked()) {
+    throw new Error(
+      `SPOT BLOCKED — BINANCE_TESTNET=${isTestnet()} | ENABLE_SPOT_LIVE_TRADING=${isSpotLiveAllowed()} | symbol=${symbol}`
+    );
+  }
   if (!symbol || !quoteAmount) throw new Error('placeSpotBuy: symbol and quoteAmount required');
 
   const { stepSize, minQty, minNotional } = await getSpotSymbolFilters(symbol);

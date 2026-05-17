@@ -1,7 +1,9 @@
 // Spot DCA Manager — accumulation en 3 tranches à prix dégressifs
 // checkFills() spec validée 3/3 LLMs 2026-05-17
+// Guard BINANCE_TESTNET validé 3/3 LLMs 2026-05-17 (B+D dans startDCA)
 import { getSpotOrderStatus, placeSpotBuy, cancelSpotOrder } from './spot-executor.js';
 import { sendTelegram } from './notifier.js';
+import { isSpotTradingBlocked, isTestnet, isSpotLiveAllowed } from './utils/guards.js';
 
 const DEFAULT_TOTAL_USDT = Number(process.env.SPOT_DCA_USDT) || 150;
 const TRANCHE_COUNT      = 3;
@@ -52,6 +54,20 @@ async function _closeSession(symbol, endReason) {
 }
 
 export async function startDCA(symbol, markPrice) {
+  // Guard défensif (Option B+D — consensus 3/3 LLMs 2026-05-17)
+  // Binance Spot API n'a pas de testnet — bloquer si BINANCE_TESTNET=true ou ENABLE_SPOT_LIVE_TRADING!=true
+  if (isSpotTradingBlocked()) {
+    const reason = isTestnet()
+      ? `BINANCE_TESTNET=true (Spot API toujours production)`
+      : `ENABLE_SPOT_LIVE_TRADING non activé`;
+    console.warn(`[spot-dca] DRY-RUN BLOCKED — ${symbol} @${markPrice} — ${reason}`);
+    await sendTelegram(
+      `🧪 <b>[DRY-RUN] DCA Spot simulé</b>  ·  <code>${symbol}</code>\n` +
+      `@<code>${markPrice}</code> — ${reason}\nAucun ordre réel envoyé.`
+    ).catch(() => {});
+    return;
+  }
+
   if (activeDCA.has(symbol)) {
     console.log(`[spot-dca] ${symbol} DCA déjà actif — skip`);
     return;

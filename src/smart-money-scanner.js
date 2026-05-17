@@ -1,9 +1,11 @@
 // smart-money-scanner.js v2 — Spec validée 3/3 LLMs 2026-05-17
 // Revue code 3/3 LLMs 2026-05-17 — 9 corrections appliquées
+// Guard BINANCE_TESTNET validé 3/3 LLMs 2026-05-17 (Option A dans canTradeLive)
 // Signal: CVD bullish divergence + spot/perp basis premium + MSB 15m
 // Philosophie: smart money accumule spot avant push perp
 
 import { getBotState, getMode, isPaused, isEmergencyStopped, recordTrade } from './bot-state.js';
+import { isTestnet as _isTestnet } from './utils/guards.js';
 import { startDCA } from './spot-dca-manager.js';
 import { sendTelegram } from './notifier.js';
 import { executeOrder } from './order-executor.js';
@@ -274,8 +276,9 @@ async function scanSmartMoney() {
     try { await sendTelegram(lines.join('\n')); }
     catch (err) { console.error(`[smart-money] Telegram ${symbol}:`, err.message); }
 
-    // Garde canTradeLive pour DCA ET perp (correction revue code #6 + refactor)
-    const canTradeLive = mode === 'LIVE' && !isPaused() && !isEmergencyStopped();
+    // Garde canTradeLive — exclut testnet (Option A, 3/3 LLMs 2026-05-17)
+    // Binance Spot n'a pas de testnet : si BINANCE_TESTNET=true, bloquer DCA ET perp simulé
+    const canTradeLive = mode === 'LIVE' && !isPaused() && !isEmergencyStopped() && !_isTestnet();
 
     if (spotSignal) {
       if (canTradeLive) {
