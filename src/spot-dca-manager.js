@@ -138,9 +138,11 @@ export async function cancelDCA(symbol, reason = 'MANUAL_CANCEL') {
 
 async function checkFills() {
   const now = Date.now();
-  for (const [symbol, state] of activeDCA.entries()) {
+  for (const [symbol, state] of [...activeDCA.entries()]) {
     if (now - state.openedAt > MAX_DCA_AGE_MS) {
-      await cancelDCA(symbol, 'EXPIRED_7DAYS');
+      await cancelDCA(symbol, 'EXPIRED_7DAYS').catch(err =>
+        console.error(`[spot-dca] cancelDCA ${symbol}:`, err.message)
+      );
       continue;
     }
 

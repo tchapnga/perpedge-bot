@@ -615,6 +615,7 @@ async function pollPositions() {
             console.log(`[position-manager] EARLY_EXIT ${symbol} @ ${markPrice} (${earlyCheck.reason}) pnl=${rawPnl?.toFixed(2)} USDT`);
           } catch (err) {
             console.error(`[position-manager] early exit MARKET failed ${symbol}:`, err.message);
+            savePositions(trackedPositions); // persiste earlyExitTicks même si l'ordre échoue
           }
           continue;
         }
