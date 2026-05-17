@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import useSWR from "swr";
 import { BarChart2, Search, AlertTriangle, Terminal, Settings } from "lucide-react";
-import Overview from "@/pages/Overview";
+import Dashboard from "@/pages/Overview";
 import Analyze  from "@/pages/Analyze";
 import Risk     from "@/pages/Risk";
 import Logs     from "@/pages/Logs";
@@ -55,7 +55,7 @@ export default function App(): JSX.Element {
     <Tabs defaultValue="overview" className="min-h-dvh">
       {/* Contenu des onglets — pb-20 pour ne pas être masqué par la barre */}
       <div className="pb-20">
-        <TabsContent value="overview" className="mt-0"><Overview /></TabsContent>
+        <TabsContent value="overview" className="mt-0"><Dashboard /></TabsContent>
         <TabsContent value="analyze"  className="mt-0"><Analyze /></TabsContent>
         <TabsContent value="risk"     className="mt-0"><Risk /></TabsContent>
         <TabsContent value="logs"     className="mt-0"><Logs /></TabsContent>
@@ -65,8 +65,8 @@ export default function App(): JSX.Element {
       {/* P8D.8 — Bottom navigation bar (mobile-first Telegram) */}
       <TabsList className="fixed inset-x-0 bottom-0 z-50 grid w-full grid-cols-5 h-16 rounded-none border-t border-border bg-card px-0">
         {[
-          { value: "overview", label: "Vue",    Icon: BarChart2      },
-          { value: "analyze",  label: "Trade",  Icon: Search         },
+          { value: "overview", label: "Dashboard", Icon: BarChart2    },
+          { value: "analyze",  label: "Analyse",  Icon: Search       },
           { value: "risk",     label: "Risk",   Icon: AlertTriangle  },
           { value: "logs",     label: "Logs",   Icon: Terminal       },
           { value: "config",   label: "Config", Icon: Settings       },

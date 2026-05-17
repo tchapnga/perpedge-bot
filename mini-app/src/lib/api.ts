@@ -83,6 +83,10 @@ export interface Position {
   qty?: number;
 }
 
+export interface PositionWithType extends Position {
+  type: "PERP" | "SCALP";
+}
+
 export interface Signal {
   time: string;
   symbol: string;
@@ -147,9 +151,11 @@ export function getStatus(): Promise<BotStatus> {
 }
 
 // FIX: endpoint returns { positions: [], scalp: [] }
-export async function getPositions(): Promise<Position[]> {
+export async function getPositions(): Promise<PositionWithType[]> {
   const res = await request<{ positions: Position[]; scalp: Position[] }>("/admin/positions");
-  return [...(res.positions ?? []), ...(res.scalp ?? [])];
+  const perp  = (res.positions ?? []).map(p => ({ ...p, type: "PERP"  as const }));
+  const scalp = (res.scalp     ?? []).map(p => ({ ...p, type: "SCALP" as const }));
+  return [...perp, ...scalp];
 }
 
 // FIX: endpoint returns { signals: [] }
