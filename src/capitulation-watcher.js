@@ -107,11 +107,21 @@ async function pollOnce() {
       console.error(`[capitulation-watcher] Telegram error ${symbol}:`, err.message);
     }
 
-    // Chart — async, fail-open, uniquement si R:R ≥ 2.0
-    if (result._rr != null && result._rr >= 2.0) {
-      const dir    = result.direction === 'long' ? 'LONG' : 'SHORT';
-      const levels = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
-      captureChart(symbol, '1h', levels)
+    // Chart — async, fail-open : WATCH toujours (décision manuelle), TRADE si R:R ≥ 2.0
+    if (capMode === 'WATCH' || (result._rr != null && result._rr >= 2.0)) {
+      const dir      = result.direction === 'long' ? 'LONG' : 'SHORT';
+      const levels   = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
+      const chartCtx = {
+        trend1h:    result.ta?.tf_1h?.trend,
+        trend4h:    result.ta?.tf_4h?.trend,
+        trend1d:    result.ta?.tf_1d?.trend,
+        rsi:        result.ta?.tf_1h?.rsi,
+        score:      result.total,
+        oiTrigger:  `💀 ${confidence} ${signals_fired}/3`,
+        support:    result.ta?.sr?.nearest_support,
+        resistance: result.ta?.sr?.nearest_resistance,
+      };
+      captureChart(symbol, '1h', levels, chartCtx)
         .then(path => {
           if (!path) return;
           const cap = `📊 <b>${symbol}</b> · 1H · ${dir} · 💀 Capitulation · R:R ${result._rr}`;
