@@ -3,7 +3,7 @@ import useSWR from "swr";
 import { ChevronDown, ChevronRight, Loader2, Search, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import {
   analyzeSymbol, getQuote, postManualTrade, searchSymbols,
-  type AnalyzeResult, type ManualTradeResult,
+  type AnalyzeResult, type ManualTradeResult, type SuggestedTrade,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -182,25 +182,32 @@ export default function Analyze(): JSX.Element {
   const globalScore = result?.total ?? 0;
 
   // ── Manual trade state ────────────────────────────────────────────────────
-  const [manualSide, setSide]     = useState<"LONG" | "SHORT">("LONG");
-  const [sizeUsdt, setSize]       = useState("50");
-  const [leverage, setLev]        = useState("10");
-  const [entryPrice, setEntry]    = useState("");
-  const [slPrice, setSl]          = useState("");
-  const [tpPrice, setTp]          = useState("");
-  const [showNote, setShowNote]   = useState(false);
-  const [note, setNote]           = useState("");
-  const [submitting, setSubmit]   = useState(false);
-  const [tradeRes, setTradeRes]   = useState<ManualTradeResult | null>(null);
+  const [manualSide, setSide]            = useState<"LONG" | "SHORT">("LONG");
+  const [sizeUsdt, setSize]              = useState("50");
+  const [leverage, setLev]               = useState("10");
+  const [entryPrice, setEntry]           = useState("");
+  const [slPrice, setSl]                 = useState("");
+  const [tpPrice, setTp]                 = useState("");
+  const [showNote, setShowNote]          = useState(false);
+  const [note, setNote]                  = useState("");
+  const [submitting, setSubmit]          = useState(false);
+  const [tradeRes, setTradeRes]          = useState<ManualTradeResult | null>(null);
+  const [suggestionApplied, setApplied]  = useState(false);
+  const [priceDriftWarning, setDrift]    = useState(false);
 
-  // Pre-fill side from analysis
+  const suggestion: SuggestedTrade | null = result?.llm?.suggested_trade ?? null;
+  const isContrarian = result?.llm?.decision === "CONTRARIAN_FLIP";
+
+  // Reset suggestion tracking + pre-fill side when result changes
   useEffect(() => {
-    if (result?.signal && result.signal !== "NO_TRADE") {
+    setApplied(false);
+    setDrift(false);
+    if (result?.signal && result.signal !== "NO_TRADE" && !result.llm?.suggested_trade) {
       setSide(result.signal as "LONG" | "SHORT");
     }
   }, [result]);
 
-  // Fetch quote when switching to manual tab
+  // Fetch live price when switching to manual tab
   useEffect(() => {
     if (activeTab !== "manual" || !sym) return;
     let dead = false;
@@ -212,6 +219,36 @@ export default function Analyze(): JSX.Element {
     })();
     return () => { dead = true; };
   }, [activeTab, sym]);
+
+  // Apply LLM suggestion once entry price is loaded
+  useEffect(() => {
+    if (activeTab !== "manual" || !suggestion || suggestionApplied) return;
+    const livePrice = parseFloat(entryPrice);
+    if (!Number.isFinite(livePrice) || livePrice <= 0) return;
+
+    setSide(suggestion.side);
+    setLev(String(suggestion.leverage));
+    if (suggestion.note) { setNote(suggestion.note); setShowNote(true); }
+
+    if (suggestion.reference_price) {
+      const drift = Math.abs(livePrice - suggestion.reference_price) / suggestion.reference_price;
+      if (drift > 0.005) {
+        setDrift(true);
+        setApplied(true);
+        return; // side/lev/note applied but SL/TP skipped — price moved too much
+      }
+    }
+
+    const p = parseInt(precStr(livePrice));
+    if (suggestion.side === "LONG") {
+      setSl((livePrice * (1 - suggestion.sl_pct / 100)).toFixed(p));
+      setTp((livePrice * (1 + suggestion.tp_pct / 100)).toFixed(p));
+    } else {
+      setSl((livePrice * (1 + suggestion.sl_pct / 100)).toFixed(p));
+      setTp((livePrice * (1 - suggestion.tp_pct / 100)).toFixed(p));
+    }
+    setApplied(true);
+  }, [activeTab, suggestion, suggestionApplied, entryPrice]);
 
   // Computed values
   const entry = parseFloat(entryPrice);
@@ -423,6 +460,27 @@ export default function Analyze(): JSX.Element {
                     {result.llm.reasoning && (
                       <p className="text-sm leading-5 text-muted-foreground">{result.llm.reasoning}</p>
                     )}
+                    {result.llm.suggested_trade && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
+                        <Sparkles className="h-3 w-3 text-primary" />
+                        <span className="font-medium text-primary">Suggestion :</span>
+                        <span className={result.llm.suggested_trade.side === "LONG" ? "text-emerald-400" : "text-red-400"}>
+                          {result.llm.suggested_trade.side}
+                        </span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-red-300">SL -{result.llm.suggested_trade.sl_pct}%</span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-emerald-300">TP +{result.llm.suggested_trade.tp_pct}%</span>
+                        <span className="text-muted-foreground">·</span>
+                        <span>{result.llm.suggested_trade.leverage}x</span>
+                        <button
+                          onClick={() => setActiveTab("manual")}
+                          className="ml-auto text-primary underline underline-offset-2"
+                        >
+                          Voir Manuel →
+                        </button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ) : isBlocked ? (
@@ -463,7 +521,24 @@ export default function Analyze(): JSX.Element {
           {/* Form card */}
           <Card>
             <CardContent className="pt-4 space-y-4">
-              <div className="text-sm font-medium">Trade manuel{sym ? ` — ${sym}` : ""}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">Trade manuel{sym ? ` — ${sym}` : ""}</span>
+                {suggestionApplied && !priceDriftWarning && (
+                  <Badge variant="secondary" className="gap-1 border-primary/30 bg-primary/10 text-primary text-[10px]">
+                    <Sparkles className="h-2.5 w-2.5" />Suggestion LLM
+                  </Badge>
+                )}
+                {isContrarian && (
+                  <Badge variant="secondary" className="border-orange-500/30 bg-orange-950/20 text-orange-300 text-[10px]">
+                    ⚠️ Contrarienne
+                  </Badge>
+                )}
+                {priceDriftWarning && (
+                  <Badge variant="secondary" className="border-orange-500/30 bg-orange-950/20 text-orange-300 text-[10px]">
+                    ⚠️ Prix décalé — SL/TP à recalculer
+                  </Badge>
+                )}
+              </div>
 
               {/* Side */}
               <div>

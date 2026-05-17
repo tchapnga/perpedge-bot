@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // ─── Shared ───────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = "Tu es le Validateur Final d'Execution du bot PerpEdge-Bot. Tu recois le resultat JSON de scoreSymbol() et tu dois decider si le signal doit etre execute. Principe: preservation du capital par defaut. Reponse UNIQUEMENT JSON: { decision: APPROVE|REJECT|CONTRARIAN_FLIP|PENDING, confidence: 0.0-1.0, reasoning: string max 200 chars, warnings: [] }. REGLES ABSOLUES (REJECT confidence 0.98): gate_block=true, signal=NO_TRADE, veto_reason non-null. REJET FORT: force=FAIBLE+total<6, ta_score<3, der_score<2+no contrarian, btc_corr>0.7+ta<3+msb oppose, msb oppose+rv high/extreme. CLIMAX RULE: si rv_regime extreme/climax - identifier crowded_side via crowded_trigger+contrarian_signal - si direction=crowded_side: CONTRARIAN_FLIP(der>=2) sinon REJECT - ne pas rejeter climax+LONG sans verifier crowded_side. APPROVE(toutes): gate_block false, non NO_TRADE, veto null, FORT/MODERE, total>=6, ta>=3, der>=2 ou contrarian, non-climax ou oppose crowded. confidence 0.80 +0.05 si der>=4 -0.10 si mixte. CONTRARIAN_FLIP(toutes): gate false, contrarian_signal, rv extreme/climax ou crowded_trigger, direction vulnerable, der>=2. confidence 0.92-0.94. PENDING: rv high, ta fort+der faible, total 5-6. confidence 0.55-0.74.";
+const SYSTEM_PROMPT = "Tu es le Validateur Final d'Execution du bot PerpEdge-Bot. Tu recois le resultat JSON de scoreSymbol() et tu dois decider si le signal doit etre execute. Principe: preservation du capital par defaut. REGLES ABSOLUES (REJECT confidence 0.98): gate_block=true, signal=NO_TRADE, veto_reason non-null. REJET FORT: force=FAIBLE+total<6, ta_score<3, der_score<2+no contrarian, btc_corr>0.7+ta<3+msb oppose, msb oppose+rv high/extreme. CLIMAX RULE: si rv_regime extreme/climax - identifier crowded_side via crowded_trigger+contrarian_signal - si direction=crowded_side: CONTRARIAN_FLIP(der>=2) sinon REJECT - ne pas rejeter climax+LONG sans verifier crowded_side. APPROVE(toutes): gate_block false, non NO_TRADE, veto null, FORT/MODERE, total>=6, ta>=3, der>=2 ou contrarian, non-climax ou oppose crowded. confidence 0.80 +0.05 si der>=4 -0.10 si mixte. CONTRARIAN_FLIP(toutes): gate false, contrarian_signal, rv extreme/climax ou crowded_trigger, direction vulnerable, der>=2. confidence 0.92-0.94. PENDING: rv high, ta fort+der faible, total 5-6. confidence 0.55-0.74. SUGGESTED_TRADE: si decision=APPROVE ou CONTRARIAN_FLIP ET confidence>=0.75, remplis le champ suggested_trade. REGLES ABSOLUES suggested_trade: (1) place SL et TP selon la structure technique reelle (supports/resistances, momentum) — INTERDIT de fabriquer un TP fictif pour satisfaire le R:R; si R:R<1.5 naturellement atteignable, utilise decision=PENDING. (2) side = direction recommandee — SHORT si CONTRARIAN_FLIP sur un signal LONG original. (3) sl_pct entre 0.3 et 5.0 (distance SL depuis entry en %). (4) tp_pct tel que tp_pct/sl_pct >= 1.5. (5) leverage entre 1 et 10 — conservateur selon volatilite percue (derScore eleve, rv high → leverage bas). (6) REGLES D'INVALIDATION: si gate_block non-null, si rv_regime=extreme, si der_score<2, ou si leverage*sl_pct>20, n'inclus PAS suggested_trade. (7) reference_price = mark_price present dans scoreResult si disponible, sinon omis.";
 
 // Prompt envoyé aux LLMs externes — sans aucune clé API ni secret
 const LOCAL_PROMPT_HEADER = `Tu es un validateur de signal de trading crypto. Réponds UNIQUEMENT avec du JSON brut (aucun markdown, aucun texte avant ou après, juste le JSON):
@@ -138,7 +138,31 @@ function normalizeDecision(raw) {
     ? raw.reasoning.slice(0, 200)
     : String(raw?.reasoning ?? '').slice(0, 200);
   const warnings = Array.isArray(raw?.warnings) ? raw.warnings.map(w => String(w)) : [];
-  return { decision, confidence: Math.max(0, Math.min(1, confidence)), reasoning, warnings };
+
+  let suggested_trade = null;
+  const s = raw?.suggested_trade;
+  if (s && ['APPROVE', 'CONTRARIAN_FLIP'].includes(decision) && confidence >= 0.75) {
+    const side    = String(s.side || '').toUpperCase();
+    const sl_pct  = Number(s.sl_pct);
+    const tp_pct  = Number(s.tp_pct);
+    const leverage = Math.round(Number(s.leverage));
+    const note    = String(s.note || '').slice(0, 100);
+    const ref     = Number(s.reference_price);
+    if (
+      ['LONG', 'SHORT'].includes(side)
+      && Number.isFinite(sl_pct) && sl_pct >= 0.3 && sl_pct <= 5.0
+      && Number.isFinite(tp_pct) && tp_pct >= 0.3 && tp_pct / sl_pct >= 1.5
+      && leverage >= 1 && leverage <= 10
+      && leverage * sl_pct <= 20
+    ) {
+      suggested_trade = {
+        side, sl_pct, tp_pct, leverage, note,
+        ...(Number.isFinite(ref) && ref > 0 ? { reference_price: ref } : {}),
+      };
+    }
+  }
+
+  return { decision, confidence: Math.max(0, Math.min(1, confidence)), reasoning, warnings, suggested_trade };
 }
 
 function getSymbol(r) { return r?.symbol || r?.pair || r?.ticker || 'UNKNOWN'; }
@@ -189,7 +213,7 @@ function isJsonError(err) {
 
 const VALIDATOR_TOOL = {
   name: 'validate_signal',
-  description: 'Valide un signal de trading et retourne la décision structurée.',
+  description: 'Valide un signal de trading et retourne la décision structurée + suggestion de trade si applicable.',
   input_schema: {
     type: 'object',
     properties: {
@@ -197,6 +221,19 @@ const VALIDATOR_TOOL = {
       confidence: { type: 'number', minimum: 0, maximum: 1 },
       reasoning:  { type: 'string', description: 'Max 200 chars' },
       warnings:   { type: 'array', items: { type: 'string' } },
+      suggested_trade: {
+        type: 'object',
+        description: 'Suggestion de trade — remplie UNIQUEMENT si decision=APPROVE ou CONTRARIAN_FLIP et confidence>=0.75. Interdit de fabriquer SL/TP pour satisfaire R:R.',
+        properties: {
+          side:            { type: 'string', enum: ['LONG', 'SHORT'], description: 'Direction recommandée (SHORT si CONTRARIAN_FLIP)' },
+          reference_price: { type: 'number', description: 'mark_price du scoreResult si disponible' },
+          sl_pct:          { type: 'number', minimum: 0.3, maximum: 5.0, description: 'Distance SL depuis entry en % (positif)' },
+          tp_pct:          { type: 'number', minimum: 0.3, maximum: 15.0, description: 'Distance TP depuis entry en % — tp_pct/sl_pct >= 1.5 naturellement' },
+          leverage:        { type: 'integer', minimum: 1, maximum: 10, description: 'Levier suggéré — conservateur' },
+          note:            { type: 'string', description: 'Justification courte max 100 chars' },
+        },
+        required: ['side', 'sl_pct', 'tp_pct', 'leverage', 'note'],
+      },
     },
     required: ['decision', 'confidence', 'reasoning', 'warnings'],
   },

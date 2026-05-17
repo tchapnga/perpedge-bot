@@ -96,11 +96,20 @@ export interface Signal {
   llm_validation?: { decision: string; reasoning?: string };
 }
 
+export interface SuggestedTrade {
+  side: "LONG" | "SHORT";
+  sl_pct: number;
+  tp_pct: number;
+  leverage: number;
+  note: string;
+  reference_price?: number;
+}
+
 export interface AnalyzeResult {
   symbol: string;
   signal: SignalSide;
   total: number;
-  llm?: { decision: string; reasoning?: string };
+  llm?: { decision: string; reasoning?: string; suggested_trade?: SuggestedTrade | null };
   result?: Record<string, unknown>;
 }
 
