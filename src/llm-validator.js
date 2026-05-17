@@ -142,24 +142,31 @@ function normalizeDecision(raw) {
   let suggested_trade = null;
   const s = raw?.suggested_trade;
   if (s && ['APPROVE', 'CONTRARIAN_FLIP'].includes(decision) && confidence >= 0.75) {
-    const side    = String(s.side || '').toUpperCase();
-    const sl_pct  = Number(s.sl_pct);
-    const tp_pct  = Number(s.tp_pct);
+    const side     = String(s.side || '').toUpperCase();
+    const sl_pct   = Number(s.sl_pct);
+    const tp_pct   = Number(s.tp_pct);
     const leverage = Math.round(Number(s.leverage));
-    const note    = String(s.note || '').slice(0, 100);
-    const ref     = Number(s.reference_price);
-    if (
+    const note     = String(s.note || '').slice(0, 100);
+    const ref      = Number(s.reference_price);
+    const riskUnit = leverage * sl_pct;
+    const valid = (
       ['LONG', 'SHORT'].includes(side)
       && Number.isFinite(sl_pct) && sl_pct >= 0.3 && sl_pct <= 5.0
       && Number.isFinite(tp_pct) && tp_pct >= 0.3 && tp_pct / sl_pct >= 1.5
       && leverage >= 1 && leverage <= 10
-      && leverage * sl_pct <= 20
-    ) {
+      && riskUnit <= 30
+    );
+    if (valid) {
       suggested_trade = {
         side, sl_pct, tp_pct, leverage, note,
         ...(Number.isFinite(ref) && ref > 0 ? { reference_price: ref } : {}),
       };
+      console.log(`[llm-validator] suggested_trade ✓ ${side} sl=${sl_pct}% tp=${tp_pct}% lev=${leverage}x risk=${riskUnit.toFixed(1)}%`);
+    } else {
+      console.warn(`[llm-validator] suggested_trade rejeté — side=${side} sl=${sl_pct} tp=${tp_pct} lev=${leverage} risk=${riskUnit.toFixed(1)} R:R=${(tp_pct/sl_pct).toFixed(2)}`);
     }
+  } else if (s && ['APPROVE', 'CONTRARIAN_FLIP'].includes(decision)) {
+    console.warn(`[llm-validator] suggested_trade ignoré — confidence=${confidence.toFixed(2)} < 0.75`);
   }
 
   return { decision, confidence: Math.max(0, Math.min(1, confidence)), reasoning, warnings, suggested_trade };
@@ -175,6 +182,10 @@ function logDecision(scoreResult, v, mode = 'claude') {
   const total = getTotal(scoreResult);
   console.log(`[${ts()}][llm-validator:${mode}] ${v.decision} ${getSymbol(scoreResult)} ${total ?? '?'}/10 confidence=${Number(v.confidence ?? 0).toFixed(2)}`);
   if (v.warnings?.length) console.log(`  [llm-validator:${mode}] warnings: ${v.warnings.join(' | ')}`);
+  if (v.suggested_trade) {
+    const s = v.suggested_trade;
+    console.log(`  [llm-validator:${mode}] suggested_trade → ${s.side} sl=${s.sl_pct}% tp=${s.tp_pct}% lev=${s.leverage}x note="${s.note}"`);
+  }
 }
 
 function failOpen(reason = 'validator_timeout') {

@@ -199,17 +199,21 @@ export default function Analyze(): JSX.Element {
   const isContrarian = result?.llm?.decision === "CONTRARIAN_FLIP";
 
   // Reset suggestion tracking + pre-fill side when result changes
+  // Also force-clear SL/TP so stale values don't persist across analyses
   useEffect(() => {
     setApplied(false);
     setDrift(false);
+    setSl("");
+    setTp("");
     if (result?.signal && result.signal !== "NO_TRADE" && !result.llm?.suggested_trade) {
       setSide(result.signal as "LONG" | "SHORT");
     }
   }, [result]);
 
-  // Fetch live price when switching to manual tab
+  // Fetch live price when switching to manual tab OR when a new result arrives (to trigger suggestion)
   useEffect(() => {
     if (activeTab !== "manual" || !sym) return;
+    setEntry(""); // clear first so effect re-fires even if price is the same
     let dead = false;
     (async () => {
       try {
@@ -218,7 +222,8 @@ export default function Analyze(): JSX.Element {
       } catch { /* ignore */ }
     })();
     return () => { dead = true; };
-  }, [activeTab, sym]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, sym, result]);
 
   // Apply LLM suggestion once entry price is loaded
   useEffect(() => {
