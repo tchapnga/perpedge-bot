@@ -1,11 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { BarChart2, Search, AlertTriangle, Terminal, Settings } from "lucide-react";
 import Dashboard from "@/pages/Overview";
 import Analyze  from "@/pages/Analyze";
 import Risk     from "@/pages/Risk";
 import Logs     from "@/pages/Logs";
-import { getSignals, getStatus, patchConfig, toggleModule } from "@/lib/api";
+import { getSignals, getStatus, patchConfig, toggleModule, type BotMode, type TradeProfile } from "@/lib/api";
 import { useMyRole } from "@/hooks/useMyRole";
 import { Badge }   from "@/components/ui/badge";
 import { Button }  from "@/components/ui/button";
@@ -94,26 +94,53 @@ export default function App(): JSX.Element {
 }
 
 // ── Config page (mode + modules) ─────────────────────────────────────────────
+type ConfirmKind = "mode-live" | "profile-aggressive";
+
 function ConfigPage(): JSX.Element {
-  const { data: status, mutate } = useSWR("config-status", getStatus, { refreshInterval: 5000 });
-
-  const setMode = async (mode: "LIVE" | "SHADOW" | "DRY_RUN"): Promise<void> => {
-    await patchConfig({ mode });
-    await mutate();
-  };
-
-  const setProfile = async (tradeProfile: "conservative" | "balanced" | "aggressive"): Promise<void> => {
-    await patchConfig({ tradeProfile });
-    await mutate();
-  };
-
-  const toggle = async (name: string, enabled: boolean): Promise<void> => {
-    await toggleModule(name, enabled);
-    await mutate();
-  };
-
+  const { data: status, isLoading: statusLoading, mutate } = useSWR("config-status", getStatus, { refreshInterval: 5000 });
   const { data: signals } = useSWR("signals-cfg", getSignals, { refreshInterval: 10000 });
+
+  const [isSaving, setIsSaving]     = useState(false);
+  const [saveError, setSaveError]   = useState<string | null>(null);
+  const [confirm, setConfirm]       = useState<{ kind: ConfirmKind; payload: string } | null>(null);
+
   const modules = status?.modules ?? {};
+
+  const withSave = (fn: () => Promise<void>): void => {
+    if (isSaving) return;
+    setIsSaving(true);
+    setSaveError(null);
+    fn()
+      .catch((err: unknown) => setSaveError(err instanceof Error ? err.message : "Erreur API"))
+      .finally(() => setIsSaving(false));
+  };
+
+  const applyMode = (mode: BotMode) =>
+    withSave(async () => { await patchConfig({ mode }); await mutate(); });
+
+  const applyProfile = (tradeProfile: TradeProfile) =>
+    withSave(async () => { await patchConfig({ tradeProfile }); await mutate(); });
+
+  const handleMode = (mode: BotMode) => {
+    if (mode === "LIVE") { setConfirm({ kind: "mode-live", payload: mode }); return; }
+    applyMode(mode);
+  };
+
+  const handleProfile = (p: TradeProfile) => {
+    if (p === "aggressive") { setConfirm({ kind: "profile-aggressive", payload: p }); return; }
+    applyProfile(p);
+  };
+
+  const handleToggle = (name: string, enabled: boolean) =>
+    withSave(async () => { await toggleModule(name, enabled); await mutate(); });
+
+  const handleConfirm = () => {
+    if (!confirm) return;
+    const { kind, payload } = confirm;
+    setConfirm(null);
+    if (kind === "mode-live")           applyMode(payload as BotMode);
+    else if (kind === "profile-aggressive") applyProfile(payload as TradeProfile);
+  };
 
   return (
     <div className="space-y-5 px-4 py-5">
@@ -122,14 +149,42 @@ function ConfigPage(): JSX.Element {
         <p className="mt-1 text-sm text-muted-foreground">Mode d'exécution et modules.</p>
       </div>
 
+      {saveError && (
+        <div className="rounded-xl border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+          {saveError}
+        </div>
+      )}
+
+      {/* Inline confirmation — no portal, guaranteed to work inside Telegram WebApp iframe */}
+      {confirm && (
+        <div className="rounded-xl border border-orange-500/60 bg-orange-950/30 px-4 py-4 space-y-3">
+          <div className="text-sm font-semibold text-orange-200">
+            {confirm.kind === "mode-live" ? "⚠️ Passer en mode LIVE" : "⚠️ Profil Agressif"}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {confirm.kind === "mode-live"
+              ? <span>Le mode <b>LIVE</b> exécute de vrais ordres sur Binance avec du capital réel. Confirmer ?</span>
+              : <span>Ce profil déclenche <b>Perp + Spot DCA simultanément</b> à <b>0.5× taille normale</b> (exposition totale 1.0×). Le circuit breaker reste actif.</span>
+            }
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirm(null)}>Annuler</Button>
+            <Button onClick={handleConfirm}>
+              {confirm.kind === "mode-live" ? "Confirmer LIVE" : "Confirmer Agressif"}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Card>
-        <CardHeader><CardTitle>Mode</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-sm">Mode</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap gap-3">
-          {(["LIVE", "SHADOW", "DRY_RUN"] as const).map((mode) => (
+          {(["LIVE", "SHADOW"] as const).map((mode) => (
             <Button
               key={mode}
               variant={status?.mode === mode ? "default" : "secondary"}
-              onClick={() => setMode(mode)}
+              disabled={isSaving || statusLoading}
+              onClick={() => handleMode(mode)}
             >
               {mode}
             </Button>
@@ -138,14 +193,15 @@ function ConfigPage(): JSX.Element {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Profil de trade</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-sm">Profil de trade</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap gap-3">
           {(["conservative", "balanced", "aggressive"] as const).map((p) => (
             <Button
               key={p}
               variant={status?.tradeProfile === p ? "default" : "secondary"}
               className={p === "aggressive" ? "border border-orange-500/60 text-orange-300 hover:bg-orange-950/30" : ""}
-              onClick={() => setProfile(p)}
+              disabled={isSaving || statusLoading}
+              onClick={() => handleProfile(p)}
             >
               {p}{p === "aggressive" ? " ⚠" : ""}
             </Button>
@@ -154,16 +210,22 @@ function ConfigPage(): JSX.Element {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Modules</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-sm">Modules</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          {Object.keys(modules).length > 0 ? (
+          {statusLoading ? (
+            <div className="text-sm text-muted-foreground">Chargement…</div>
+          ) : Object.keys(modules).length > 0 ? (
             Object.entries(modules).map(([name, enabled]) => (
               <div key={name} className="flex items-center justify-between rounded-xl border border-border p-3">
                 <div>
                   <div className="font-medium">{name}</div>
                   <div className="text-sm text-muted-foreground">{enabled ? "Activé" : "Désactivé"}</div>
                 </div>
-                <Button variant={enabled ? "secondary" : "default"} onClick={() => toggle(name, !enabled)}>
+                <Button
+                  variant={enabled ? "secondary" : "default"}
+                  disabled={isSaving}
+                  onClick={() => handleToggle(name, !enabled)}
+                >
                   {enabled ? "Désactiver" : "Activer"}
                 </Button>
               </div>
@@ -175,7 +237,7 @@ function ConfigPage(): JSX.Element {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Derniers signaux</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-sm">Derniers signaux</CardTitle></CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[360px] text-left text-sm">
@@ -188,8 +250,8 @@ function ConfigPage(): JSX.Element {
               </thead>
               <tbody>
                 {signals?.length ? (
-                  signals.slice(0, 10).map((s, i) => (
-                    <tr key={`${s.symbol}-${i}`} className="border-b border-border/50">
+                  signals.slice(0, 10).map((s) => (
+                    <tr key={`${s.symbol}-${s.time}`} className="border-b border-border/50">
                       <td className="py-2 pr-4 font-medium">{s.symbol}</td>
                       <td className="py-2 pr-4">
                         <Badge variant={s.signal === "LONG" ? "success" : s.signal === "SHORT" ? "destructive" : "secondary"}>
@@ -211,6 +273,7 @@ function ConfigPage(): JSX.Element {
           </div>
         </CardContent>
       </Card>
+
     </div>
   );
 }

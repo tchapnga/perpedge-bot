@@ -46,7 +46,7 @@ export const getDerivatives = (symbol) => Promise.all([
   apiGet('oi-change',           { symbol, period: '4h',  lookback: 6 }),
   apiGet('funding-regime',      { symbol, days: 14 }),
   apiGet('funding-history',     { symbol, limit: 24 }),
-  apiGet('orderbook-imbalance', { symbol, depth: 50 }),
+  apiGet('orderbook-imbalance', { symbol, depth: 50 }).catch(() => null),
   apiGet('liquidations-summary',{ symbol, hours: 24 }),
   apiGet('multi-exchange-funding', { symbol }),
   apiGet('multi-exchange-oi',      { symbol }),

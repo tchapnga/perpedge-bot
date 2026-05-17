@@ -3,7 +3,6 @@ import { useState } from "react";
 import { Activity, BarChart3, Gauge, ShieldAlert, Sigma, Target } from "lucide-react";
 import { type RiskData, type TradeProfile, type BotStatus, getRisk, getStatus, patchConfig } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
 function fmt(v: number, d = 2): string {
@@ -53,12 +52,10 @@ const PROFILE_OPTIONS: { value: TradeProfile; label: string; desc: string }[] = 
 function ProfileSelector({ current, onSave }: { current: TradeProfile; onSave: (p: TradeProfile) => Promise<void> }): JSX.Element {
   const [pending, setPending] = useState<TradeProfile | null>(null);
   const [saving, setSaving] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const handleSelect = (p: TradeProfile) => {
     if (p === "aggressive") {
       setPending(p);
-      setConfirmOpen(true);
     } else {
       void save(p);
     }
@@ -70,61 +67,50 @@ function ProfileSelector({ current, onSave }: { current: TradeProfile; onSave: (
   };
 
   return (
-    <>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Profil de risque Smart Money</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {PROFILE_OPTIONS.map((opt) => {
-            const active = current === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => handleSelect(opt.value)}
-                disabled={saving}
-                className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
-                  active
-                    ? "border-emerald-500 bg-emerald-950/40 text-emerald-300"
-                    : "border-border bg-card text-muted-foreground hover:border-emerald-700"
-                }`}
-              >
-                <div className="text-sm font-medium">{opt.label}</div>
-                <div className="text-xs opacity-70">{opt.desc}</div>
-              </button>
-            );
-          })}
-          <p className="text-xs text-muted-foreground pt-1">
-            Le profil revient à <b>Équilibré</b> au redémarrage du bot.
-          </p>
-        </CardContent>
-      </Card>
-
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>⚠️ Profil Agressif</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Ce profil déclenche <b>Perp + Spot DCA simultanément</b> à <b>0.5× taille normale</b> pour chaque ordre Smart Money (exposition totale 1.0×).
-          </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Le circuit breaker reste actif et stoppera automatiquement le bot en cas de perte excessive.
-          </p>
-          <DialogFooter className="gap-2 mt-4">
-            <Button variant="secondary" onClick={() => setConfirmOpen(false)}>Annuler</Button>
-            <Button
-              onClick={async () => {
-                setConfirmOpen(false);
-                if (pending) await save(pending);
-              }}
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Profil de risque Smart Money</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {/* Inline confirm — no portal, works inside Telegram WebApp iframe */}
+        {pending === "aggressive" && (
+          <div className="rounded-xl border border-orange-500/60 bg-orange-950/30 px-4 py-3 space-y-2">
+            <div className="text-sm font-semibold text-orange-200">⚠️ Profil Agressif</div>
+            <p className="text-xs text-muted-foreground">
+              Ce profil déclenche <b>Perp + Spot DCA simultanément</b> à <b>0.5× taille normale</b> (exposition totale 1.0×).
+              Le circuit breaker reste actif.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={() => setPending(null)}>Annuler</Button>
+              <Button size="sm" onClick={async () => { setPending(null); await save("aggressive"); }}>
+                Confirmer Agressif
+              </Button>
+            </div>
+          </div>
+        )}
+        {PROFILE_OPTIONS.map((opt) => {
+          const active = current === opt.value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => handleSelect(opt.value)}
+              disabled={saving}
+              className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                active
+                  ? "border-emerald-500 bg-emerald-950/40 text-emerald-300"
+                  : "border-border bg-card text-muted-foreground hover:border-emerald-700"
+              }`}
             >
-              Confirmer Agressif
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+              <div className="text-sm font-medium">{opt.label}</div>
+              <div className="text-xs opacity-70">{opt.desc}</div>
+            </button>
+          );
+        })}
+        <p className="text-xs text-muted-foreground pt-1">
+          Le profil revient à <b>Équilibré</b> au redémarrage du bot.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -192,7 +178,9 @@ export default function Risk(): JSX.Element {
             <MetricCard
               label="Total PnL"
               value={fmtPnl(data.totalPnl)}
-              helper={`Latent : ${fmtPnl(data.unrealizedPnl)}`}
+              helper={data.pnlRealtimeAvailable
+                ? `Latent : ${fmtPnl(data.unrealizedPnl)}`
+                : `Latent : — (hors ligne)`}
               danger={pnlDanger}
               icon={<Sigma className="h-4 w-4" />}
             />
@@ -206,7 +194,7 @@ export default function Risk(): JSX.Element {
             <MetricCard
               label="Marge utilisée"
               value={`${fmt(data.totalMargin)} USDT`}
-              helper="Position size × trades"
+              helper="Somme des marges actives"
               danger={false}
               icon={<Gauge className="h-4 w-4" />}
             />

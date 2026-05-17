@@ -787,11 +787,12 @@ export async function reconcilePositions() {
     const binancePositions = positionRisk
       .filter(p => Number(p.positionAmt) !== 0)
       .map(p => ({
-        symbol:     p.symbol,
-        qty:        Math.abs(Number(p.positionAmt)),
-        direction:  Number(p.positionAmt) > 0 ? 'LONG' : 'SHORT',
-        entryPrice: Number(p.entryPrice),
-        markPrice:  Number(p.markPrice),
+        symbol:          p.symbol,
+        qty:             Math.abs(Number(p.positionAmt)),
+        direction:       Number(p.positionAmt) > 0 ? 'LONG' : 'SHORT',
+        entryPrice:      Number(p.entryPrice),
+        markPrice:       Number(p.markPrice),
+        unrealizedProfit: Number(p.unRealizedProfit),
       }));
     const botPositions = Array.from(trackedPositions.entries())
       .map(([sym, p]) => ({ symbol: sym, qty: Number(p.qty ?? 0), direction: String(p.direction ?? '').toUpperCase() }))

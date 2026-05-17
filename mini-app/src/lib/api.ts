@@ -235,6 +235,7 @@ export interface RiskData {
   totalExposure: number;
   totalMargin: number;
   unrealizedPnl: number;
+  pnlRealtimeAvailable: boolean;
   winRate: number | null;
   totalTrades: number;
   wins: number;

@@ -220,6 +220,23 @@ let _getPositions = () => [];
 let _getSignalLog = () => [];
 let _getScalpPos  = () => [];
 
+// ── Binance data cache (TTL 5s) — shared by /admin/positions and /admin/risk ──
+let _binanceCache = { ts: 0, data: new Map(), ok: false };
+
+async function _fetchBinanceData(positions) {
+  if (!positions.length) return { data: new Map(), ok: true };
+  if (Date.now() - _binanceCache.ts < 5_000) return _binanceCache;
+  try {
+    const recon = await reconcilePositions();
+    const m = new Map();
+    for (const b of (recon?.binancePositions ?? [])) m.set(b.symbol, b);
+    _binanceCache = { ts: Date.now(), data: m, ok: true };
+    return _binanceCache;
+  } catch {
+    return { ..._binanceCache, ok: false };
+  }
+}
+
 export function injectAdminDeps({ getPositions, getSignalLog, getScalpPositions }) {
   _getPositions = getPositions;
   _getSignalLog = getSignalLog;
@@ -285,7 +302,22 @@ export async function startAdminApi() {
   });
 
   // ── Positions ─────────────────────────────────────────────────────────────
-  app.get('/admin/positions', async () => ({ positions: _getPositions(), scalp: _getScalpPos() }));
+  app.get('/admin/positions', async () => {
+    const perpRaw  = _getPositions();
+    const scalpRaw = _getScalpPos();
+    const allRaw   = [...perpRaw, ...scalpRaw];
+    const { data: binMap } = await _fetchBinanceData(allRaw);
+    const enrich   = p => {
+      const b = binMap.get(p.symbol);
+      return {
+        ...p,
+        side:          p.direction ?? p.side,
+        markPrice:     b?.markPrice     ?? null,
+        unrealizedPnl: Number.isFinite(b?.unrealizedProfit) ? b.unrealizedProfit : (p.unrealizedPnl ?? 0),
+      };
+    };
+    return { positions: perpRaw.map(enrich), scalp: scalpRaw.map(enrich) };
+  });
 
   // ── Symbols autocomplete (P8C.3 — cached, sorted, anti-race) ────────────
   app.get('/admin/symbols', async (req) => {
@@ -419,20 +451,52 @@ export async function startAdminApi() {
   app.get('/admin/risk', async () => {
     try {
       const positions     = _getPositions();
-      const trades        = await readAllTrades();
+      const trades        = await readAllTrades({ limit: 10_000 });
       const closed        = trades.filter(t => t.closedAt || t.closed_at || t.closedTime);
       const posSize       = Number(process.env.POSITION_SIZE_USDT ?? 50);
       const wins          = closed.filter(t => (Number(t.pnl_usdt ?? t.pnl ?? 0) || 0) > 0);
       const losses        = closed.filter(t => (Number(t.pnl_usdt ?? t.pnl ?? 0) || 0) < 0);
+      const decidedTrades = wins.length + losses.length;
       const totalPnl      = closed.reduce((s, t) => s + (Number(t.pnl_usdt ?? t.pnl ?? 0) || 0), 0);
-      const unrealizedPnl = positions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0);
+
+      // unrealizedPnl : utilise unRealizedProfit natif Binance (via reconcilePositions),
+      // fallback sur calcul local entry×qty si le champ est absent
+      let unrealizedPnl = 0;
+      let pnlRealtimeAvailable = positions.length === 0;
+      if (positions.length > 0) {
+        const { data: binMap, ok: binOk } = await _fetchBinanceData(positions);
+        pnlRealtimeAvailable = binOk;
+        unrealizedPnl = positions.reduce((sum, p) => {
+          const bin = binMap.get(p.symbol);
+          if (!bin) return sum;
+          if (Number.isFinite(bin.unrealizedProfit)) return sum + bin.unrealizedProfit;
+          // fallback : calcul depuis mark price
+          const mark  = Number(bin.markPrice);
+          const entry = Number(p.entry);
+          const qty   = Number(p.qty);
+          const dir   = String(p.direction ?? '').toUpperCase();
+          if (!Number.isFinite(mark) || !Number.isFinite(entry) || !Number.isFinite(qty)) return sum;
+          return sum + (dir === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty);
+        }, 0);
+      }
+
+      // margin : champ réel si présent, sinon posSize par défaut
+      const totalMargin   = +positions.reduce((s, p) => s + (Number(p.margin) || posSize), 0).toFixed(2);
+      // exposure : entry×qty si disponibles (notional réel), sinon margin×leverage
+      const totalExposure = +positions.reduce((s, p) => {
+        const notional = (Number(p.entry) > 0 && Number(p.qty) > 0)
+          ? Number(p.entry) * Number(p.qty)
+          : (Number(p.margin) || posSize) * (Number(p.leverage) || 20);
+        return s + notional;
+      }, 0).toFixed(2);
       const series        = _buildEquitySeries(trades);
       return {
         openPositions: positions.length,
-        totalExposure: +(positions.length * posSize * 20).toFixed(2),
-        totalMargin:   +(positions.length * posSize).toFixed(2),
-        unrealizedPnl: +unrealizedPnl.toFixed(2),
-        winRate:       closed.length > 0 ? +((wins.length / closed.length) * 100).toFixed(1) : null,
+        totalExposure,
+        totalMargin,
+        unrealizedPnl:        +unrealizedPnl.toFixed(2),
+        pnlRealtimeAvailable: pnlRealtimeAvailable,
+        winRate:              decidedTrades > 0 ? +((wins.length / decidedTrades) * 100).toFixed(1) : null,
         totalTrades:   closed.length,
         wins:          wins.length,
         losses:        losses.length,

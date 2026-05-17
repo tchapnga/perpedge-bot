@@ -14,10 +14,12 @@ export async function logTrade(entry) {
   }
 }
 
-export async function readAllTrades() {
+export async function readAllTrades({ limit } = {}) {
   try {
     const raw = await readFile(JOURNAL_PATH, 'utf8');
-    return raw.trim().split('\n').filter(Boolean).map(line => {
+    const lines = raw.trim().split('\n').filter(Boolean);
+    const slice = limit ? lines.slice(-limit) : lines;
+    return slice.map(line => {
       try { return JSON.parse(line); } catch { return null; }
     }).filter(Boolean);
   } catch (err) {

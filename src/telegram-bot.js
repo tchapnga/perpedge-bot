@@ -56,7 +56,7 @@ function buildStatusMessage() {
     : `▶ ${state.mode}`;
 
   const posLines = positions.length
-    ? positions.map(p => `  • ${p.symbol} ${p.side}  $${fmt(p.entry)}  PnL <code>${p.unrealizedPnl != null ? (p.unrealizedPnl > 0 ? '+' : '') + p.unrealizedPnl.toFixed(2) : '—'}</code>`).join('\n')
+    ? positions.map(p => `  • ${p.symbol} ${p.direction ?? p.side ?? '?'}  $${fmt(p.entry)}  PnL <code>${p.unrealizedPnl != null ? (p.unrealizedPnl > 0 ? '+' : '') + p.unrealizedPnl.toFixed(2) : '—'}</code>`).join('\n')
     : '  <i>Aucune position ouverte</i>';
 
   const lines = [

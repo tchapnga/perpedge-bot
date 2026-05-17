@@ -226,14 +226,22 @@ export default function Analyze(): JSX.Element {
   const isContrarian = result?.llm?.decision === "CONTRARIAN_FLIP";
 
   // Reset suggestion tracking + pre-fill side when result changes
-  // Also force-clear SL/TP so stale values don't persist across analyses
   useEffect(() => {
     setApplied(false);
     setDrift(false);
     setSl("");
     setTp("");
-    if (result?.signal && result.signal !== "NO_TRADE" && !result.llm?.suggested_trade) {
+    if (!result) return;
+    if (result.signal && result.signal !== "NO_TRADE" && !result.llm?.suggested_trade) {
       setSide(result.signal as "LONG" | "SHORT");
+    } else if (result.signal === "NO_TRADE") {
+      // Infer direction from TA badges: count positive vs negative contributions
+      const det = result.result as ResultDetail | undefined;
+      const tags = Array.isArray(det?.ta_detail) ? (det.ta_detail as string[]) : [];
+      const pos = tags.filter(d => d.startsWith("+")).length;
+      const neg = tags.filter(d => d.startsWith("-")).length;
+      if (pos > neg) setSide("LONG");
+      else if (neg > pos) setSide("SHORT");
     }
   }, [result]);
 
@@ -251,6 +259,22 @@ export default function Analyze(): JSX.Element {
     return () => { dead = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, sym, result]);
+
+  // Default SL/TP fallback (-1%/+2%) when no LLM suggestion but result exists
+  useEffect(() => {
+    if (activeTab !== "manual" || suggestion || !result) return;
+    const livePrice = parseFloat(entryPrice);
+    if (!Number.isFinite(livePrice) || livePrice <= 0) return;
+    if (slPrice || tpPrice) return; // don't override user's manual input
+    const p = parseInt(precStr(livePrice));
+    setSl(manualSide === "LONG"
+      ? (livePrice * 0.99).toFixed(p)
+      : (livePrice * 1.01).toFixed(p));
+    setTp(manualSide === "LONG"
+      ? (livePrice * 1.02).toFixed(p)
+      : (livePrice * 0.98).toFixed(p));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, suggestion, entryPrice, result, manualSide]);
 
   // Apply LLM suggestion once entry price is loaded
   useEffect(() => {
@@ -299,8 +323,8 @@ export default function Analyze(): JSX.Element {
   const tpPct  = ok_e && ok_tp ? ((Math.abs(tp - entry)  / entry) * 100).toFixed(2) : null;
   const rr     = slTpOk && entry !== sl
     ? (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(1) : null;
-  const estLoss = slPct && size ? (size * parseFloat(slPct) / 100).toFixed(2) : null;
-  const estGain = tpPct && size ? (size * parseFloat(tpPct) / 100).toFixed(2) : null;
+  const estLoss = slPct && size ? (size * lev * parseFloat(slPct) / 100).toFixed(2) : null;
+  const estGain = tpPct && size ? (size * lev * parseFloat(tpPct) / 100).toFixed(2) : null;
 
   const canSubmit = isOperator && ok_e && ok_sl && ok_tp && slTpOk
     && Number.isFinite(lev) && lev >= 1 && size > 0 && !submitting;

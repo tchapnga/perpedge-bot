@@ -65,13 +65,11 @@ function SwipeConfirmButton({
     }
   };
 
-  // onPointerDown stays on thumb (to capture the pointer to itself)
   const onThumbPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (disabled) return;
     dragging.current    = true;
     startX.current      = e.clientX;
     progressRef.current = 0;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     e.preventDefault();
   };
 
@@ -83,9 +81,11 @@ function SwipeConfirmButton({
           ? "border-zinc-800/60 bg-zinc-900/30 opacity-50"
           : "border-red-900/60 bg-red-950/40"
       }`}
+      style={{ touchAction: "none" }}
       onPointerMove={onTrackPointerMove}
       onPointerUp={onTrackPointerUp}
       onPointerCancel={cancelDrag}
+      onPointerLeave={cancelDrag}
     >
       <div
         className="absolute inset-y-0 left-0 bg-red-700/30"
@@ -370,8 +370,10 @@ export default function Dashboard(): JSX.Element {
         />
         <StatCard
           label="PnL latent"
-          value={`${(status?.unrealizedPnl ?? 0) >= 0 ? "+" : ""}${(status?.unrealizedPnl ?? 0).toFixed(2)} $`}
-          danger={(status?.unrealizedPnl ?? 0) < 0}
+          value={risk?.unrealizedPnl !== undefined
+            ? `${risk.unrealizedPnl >= 0 ? "+" : ""}${risk.unrealizedPnl.toFixed(2)} $`
+            : "+0.00 $"}
+          danger={(risk?.unrealizedPnl ?? 0) < 0}
         />
         <StatCard label="Signaux" value={String(status?.signalsToday ?? "—")} helper="aujourd'hui" />
         <StatCard label="Cycles"  value={String(status?.cycleCount   ?? "—")} />
