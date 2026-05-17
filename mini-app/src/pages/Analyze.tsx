@@ -166,7 +166,7 @@ export default function Analyze(): JSX.Element {
     setShowDrop(false);
   };
 
-  const QUOTE_SUFFIXES = ["USDT", "BUSD", "BTC", "ETH", "BNB"];
+  const QUOTE_SUFFIXES = ["USDT", "BUSD", "BTC", "BNB"];
 
   const runAnalysis = async () => {
     if (!sym) return;
