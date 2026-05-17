@@ -484,6 +484,48 @@ export async function startAdminApi() {
     return { ok: true, network, restarting: true };
   });
 
+  // ── Quote (prix mark actuel) ──────────────────────────────────────────────
+  app.get('/admin/quote', async (req, reply) => {
+    const symbol = String(req.query.symbol ?? '').trim().toUpperCase();
+    if (!symbol) return reply.code(400).send({ error: 'symbol required' });
+    try {
+      const base = process.env.BINANCE_TESTNET === 'true'
+        ? 'https://testnet.binancefuture.com'
+        : 'https://fapi.binance.com';
+      const res  = await fetch(`${base}/fapi/v1/ticker/price?symbol=${symbol}`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return { symbol, price: null };
+      const data = await res.json();
+      return { symbol, price: Number(data.price) || null };
+    } catch {
+      return { symbol, price: null };
+    }
+  });
+
+  // ── Trade manuel (OPERATOR minimum) ──────────────────────────────────────
+  app.post('/admin/manual-trade', { preHandler: [requireRole('OPERATOR')] }, async (req, reply) => {
+    const { symbol, side, size_usdt, leverage, sl_price, tp_price } = req.body ?? {};
+    const missing = ['symbol','side','size_usdt','leverage','sl_price','tp_price']
+      .filter(k => (req.body ?? {})[k] === undefined || (req.body ?? {})[k] === null || (req.body ?? {})[k] === '');
+    if (missing.length > 0)
+      return reply.code(400).send({ ok: false, error_code: 'MISSING_FIELDS', message: `Champs requis : ${missing.join(', ')}` });
+    try {
+      const { executeManualTrade } = await import('./manual-trade.js');
+      const result = await executeManualTrade({
+        symbol, side,
+        size_usdt: Number(size_usdt),
+        leverage:  Number(leverage),
+        sl_price:  Number(sl_price),
+        tp_price:  Number(tp_price),
+      });
+      await audit('MANUAL_TRADE', req.adminUserId, { symbol, side, size_usdt, leverage });
+      return result;
+    } catch (err) {
+      const known = ['INVALID_SYMBOL','INVALID_SIDE','INVALID_SIZE','INVALID_LEVERAGE','SL_TP_INVALID','BELOW_MIN_NOTIONAL'];
+      const code  = known.find(c => err.message?.includes(c)) ?? 'EXECUTION_ERROR';
+      return reply.code(400).send({ ok: false, error_code: code, message: err.message });
+    }
+  });
+
   // ── Export CSV des trades (P8E — OPERATOR minimum) ───────────────────────
   app.get('/admin/export', { preHandler: [requireRole('OPERATOR')] }, async (req, reply) => {
     try {

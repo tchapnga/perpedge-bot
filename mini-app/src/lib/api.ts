@@ -291,6 +291,41 @@ export function getReconcile(): Promise<ReconcileResult> {
   return request<ReconcileResult>("/admin/reconcile");
 }
 
+// ── Manual trade ─────────────────────────────────────────────────────────────
+export interface ManualTradeRequest {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  size_usdt: number;
+  leverage: number;
+  sl_price: number;
+  tp_price: number;
+  note?: string;
+}
+
+export interface ManualTradeResult {
+  ok: boolean;
+  trade_id?: string;
+  symbol?: string;
+  side?: string;
+  fill_price?: number;
+  qty?: string;
+  sl_price?: number;
+  tp_price?: number;
+  leverage?: number;
+  tracked?: boolean;
+  simulated?: boolean;
+  message?: string;
+  error_code?: string;
+}
+
+export function postManualTrade(body: ManualTradeRequest): Promise<ManualTradeResult> {
+  return request<ManualTradeResult>("/admin/manual-trade", { method: "POST", body });
+}
+
+export function getQuote(symbol: string): Promise<{ symbol: string; price: number | null }> {
+  return request<{ symbol: string; price: number | null }>(`/admin/quote?symbol=${encodeURIComponent(symbol)}`);
+}
+
 export async function downloadExport(): Promise<void> {
   const res = await fetch(`${BASE_URL}/admin/export`, {
     headers: { "Content-Type": "application/json", ...getAuthHeaders() },
