@@ -7,7 +7,7 @@ import {
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMyRole } from "@/hooks/useMyRole";
@@ -353,19 +353,17 @@ export default function Analyze(): JSX.Element {
 
               {/* TA card */}
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-1.5">
+                <CardContent className="pt-4 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-sm font-medium">
                       <TrendingUp className="h-4 w-4 text-emerald-400" />
                       Analyse Technique
-                    </span>
-                    <span className="font-bold text-emerald-400">{taScore.toFixed(1)}/5</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2.5">
+                    </div>
+                    <span className="text-sm font-bold text-emerald-400">{taScore.toFixed(1)}/5</span>
+                  </div>
                   <ScoreBar value={taScore} max={5} cls="bg-emerald-500" />
                   {taDetail.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
                       {taDetail.map((d, i) => (
                         <Badge key={i} variant={pillVariant(d)} className="px-2 py-0.5 text-xs font-mono">{d}</Badge>
                       ))}
@@ -376,19 +374,17 @@ export default function Analyze(): JSX.Element {
 
               {/* DER card */}
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-1.5">
+                <CardContent className="pt-4 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-sm font-medium">
                       <TrendingDown className="h-4 w-4 text-sky-400" />
                       Dérivés & Funding
-                    </span>
-                    <span className="font-bold text-sky-400">{derScore.toFixed(1)}/5</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2.5">
+                    </div>
+                    <span className="text-sm font-bold text-sky-400">{derScore.toFixed(1)}/5</span>
+                  </div>
                   <ScoreBar value={derScore} max={5} cls="bg-sky-500" />
                   {derDetail.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
                       {derDetail.map((d, i) => (
                         <Badge key={i} variant={pillVariant(d)} className="px-2 py-0.5 text-xs font-mono">{d}</Badge>
                       ))}
@@ -410,13 +406,11 @@ export default function Analyze(): JSX.Element {
               {/* LLM decision */}
               {result.llm ? (
                 <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center gap-2 text-sm">
+                  <CardContent className="pt-4 space-y-2">
+                    <div className="flex items-center gap-2 text-sm font-medium">
                       <Sparkles className="h-4 w-4 text-primary" />
                       Décision LLM
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-1.5">
+                    </div>
                     <Badge
                       variant={
                         result.llm.decision?.toLowerCase().includes("long")  ? "success"     :
@@ -468,10 +462,8 @@ export default function Analyze(): JSX.Element {
 
           {/* Form card */}
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Trade manuel{sym ? ` — ${sym}` : ""}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="pt-4 space-y-4">
+              <div className="text-sm font-medium">Trade manuel{sym ? ` — ${sym}` : ""}</div>
 
               {/* Side */}
               <div>
