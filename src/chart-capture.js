@@ -261,10 +261,9 @@ export async function captureChart(symbol, timeframe = '1h', levels = null) {
 
     browser = await pw.chromium.launch({
       headless: true,
-      channel:  'chrome',
       // --no-sandbox required on VPS kernels without unprivileged user namespaces;
       // acceptable here because HTML content is fully under our control (no user input rendered).
-      args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     });
     const ctx  = await browser.newContext({ viewport: { width: 960, height: 560 } });
     const page = await ctx.newPage();
