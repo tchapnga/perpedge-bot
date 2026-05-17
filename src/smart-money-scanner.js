@@ -277,6 +277,7 @@ async function analyzeSymbol(symbol, lastPrice) {
     symbol, lastPrice, score,
     cvdAbsorption, cvdStrongDivergence,
     basisBullish, basis,
+    spotMarketAvailable: basisData !== null,
     oiRegime: oiData.regime, oiChangePct: oiData.oiChangePct,
     msb15m, msb1h,
     fr, fundingAvailable, fundingPerpAllowed, fundingSpotPriority,
@@ -320,6 +321,7 @@ async function scanSmartMoney() {
 
     const spotReady = data.score >= SCORE_SPOT
       && (data.cvdAbsorption || data.cvdStrongDivergence)
+      && data.spotMarketAvailable
       && !capActive;
 
     if (!perpReady && !spotReady) return;

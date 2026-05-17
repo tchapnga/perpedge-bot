@@ -33,12 +33,14 @@ async function getSpotSymbolFilters(symbol) {
   const data = await res.json();
   const info   = data?.symbols?.find((s) => s.symbol === symbol);
   if (!info) throw new Error(`Symbol ${symbol} not found on SPOT`);
-  const lotSize   = info.filters?.find(f => f.filterType === 'LOT_SIZE');
-  const notional  = info.filters?.find(f => f.filterType === 'MIN_NOTIONAL' || f.filterType === 'NOTIONAL');
+  const lotSize    = info.filters?.find(f => f.filterType === 'LOT_SIZE');
+  const priceFilter = info.filters?.find(f => f.filterType === 'PRICE_FILTER');
+  const notional   = info.filters?.find(f => f.filterType === 'MIN_NOTIONAL' || f.filterType === 'NOTIONAL');
   if (!lotSize) throw new Error(`LOT_SIZE filter not found for ${symbol}`);
   return {
     stepSize:    Number(lotSize.stepSize),
     minQty:      Number(lotSize.minQty),
+    tickSize:    Number(priceFilter?.tickSize || 0.01),
     minNotional: Number(notional?.minNotional || notional?.minVal || 10),
   };
 }
@@ -47,6 +49,12 @@ function floorToStep(qty, step) {
   if (!step || step <= 0) return qty;
   const decimals = (String(step).split('.')[1] || '').replace(/0+$/, '').length;
   return Number((Math.floor(qty / step) * step).toFixed(decimals));
+}
+
+function roundToTick(price, tick) {
+  if (!tick || tick <= 0) return price;
+  const decimals = (String(tick).split('.')[1] || '').replace(/0+$/, '').length;
+  return Number((Math.round(price / tick) * tick).toFixed(decimals));
 }
 
 export async function placeSpotBuy({ symbol, quoteAmount, limitPrice = null }) {
@@ -59,20 +67,21 @@ export async function placeSpotBuy({ symbol, quoteAmount, limitPrice = null }) {
   }
   if (!symbol || !quoteAmount) throw new Error('placeSpotBuy: symbol and quoteAmount required');
 
-  const { stepSize, minQty, minNotional } = await getSpotSymbolFilters(symbol);
+  const { stepSize, minQty, tickSize, minNotional } = await getSpotSymbolFilters(symbol);
 
   if (limitPrice) {
-    // LIMIT order: calculate qty from quoteAmount and price
-    const rawQty = quoteAmount / limitPrice;
+    // LIMIT order: round price to PRICE_FILTER tickSize, qty to LOT_SIZE stepSize
+    const roundedPrice = roundToTick(limitPrice, tickSize);
+    const rawQty = quoteAmount / roundedPrice;
     const qty    = floorToStep(rawQty, stepSize);
     if (qty < minQty) throw new Error(`qty ${qty} < minQty ${minQty} for ${symbol}`);
-    if (qty * limitPrice < minNotional) throw new Error(`notional ${(qty * limitPrice).toFixed(2)} < min ${minNotional}`);
+    if (qty * roundedPrice < minNotional) throw new Error(`notional ${(qty * roundedPrice).toFixed(2)} < min ${minNotional}`);
     const order = await signedRequest('POST', '/api/v3/order', {
       symbol, side: 'BUY', type: 'LIMIT', timeInForce: 'GTC',
-      quantity: String(qty), price: String(limitPrice),
+      quantity: String(qty), price: String(roundedPrice),
     });
-    console.log(`[spot-executor] LIMIT BUY ${symbol} ${qty}@${limitPrice} orderId=${order.orderId}`);
-    return { success: true, orderId: order.orderId, qty, price: limitPrice, type: 'LIMIT' };
+    console.log(`[spot-executor] LIMIT BUY ${symbol} ${qty}@${roundedPrice} orderId=${order.orderId}`);
+    return { success: true, orderId: order.orderId, qty, price: roundedPrice, type: 'LIMIT' };
   } else {
     // MARKET order using quoteOrderQty
     const order = await signedRequest('POST', '/api/v3/order', {
