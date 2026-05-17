@@ -5,7 +5,7 @@
 // Signal: CVD bullish divergence + spot/perp basis premium + MSB 15m
 // Philosophie: smart money accumule spot avant push perp
 
-import { getBotState, getMode, isPaused, isEmergencyStopped, recordTrade, getTradeProfile } from './bot-state.js';
+import { getBotState, getMode, isEntryPaused, isEmergencyStopped, recordTrade, getTradeProfile } from './bot-state.js';
 import { isTestnet as _isTestnet } from './utils/guards.js';
 import { startDCA } from './spot-dca-manager.js';
 import { sendTelegram } from './notifier.js';
@@ -417,7 +417,7 @@ async function scanSmartMoney() {
     }
 
     // Garde canTradeLive — exclut testnet (Option A, 3/3 LLMs 2026-05-17)
-    const canTradeLive = mode === 'LIVE' && !isPaused() && !isEmergencyStopped() && !_isTestnet();
+    const canTradeLive = mode === 'LIVE' && !isEntryPaused() && !isEmergencyStopped() && !_isTestnet();
 
     if (execSpot) {
       if (canTradeLive) {

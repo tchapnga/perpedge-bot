@@ -55,6 +55,7 @@ export type Command =
 
 export interface BotStatus {
   mode: BotMode;
+  pauseLevel: "none" | "entries" | "all";
   isPaused: boolean;
   emergencyStopped: boolean;
   cycleCount: number;

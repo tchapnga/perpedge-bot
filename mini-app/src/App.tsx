@@ -102,6 +102,11 @@ function ConfigPage(): JSX.Element {
     await mutate();
   };
 
+  const setProfile = async (tradeProfile: "conservative" | "balanced" | "aggressive"): Promise<void> => {
+    await patchConfig({ tradeProfile });
+    await mutate();
+  };
+
   const toggle = async (name: string, enabled: boolean): Promise<void> => {
     await toggleModule(name, enabled);
     await mutate();
@@ -127,6 +132,22 @@ function ConfigPage(): JSX.Element {
               onClick={() => setMode(mode)}
             >
               {mode}
+            </Button>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Profil de trade</CardTitle></CardHeader>
+        <CardContent className="flex flex-wrap gap-3">
+          {(["conservative", "balanced", "aggressive"] as const).map((p) => (
+            <Button
+              key={p}
+              variant={status?.tradeProfile === p ? "default" : "secondary"}
+              className={p === "aggressive" ? "border border-orange-500/60 text-orange-300 hover:bg-orange-950/30" : ""}
+              onClick={() => setProfile(p)}
+            >
+              {p}{p === "aggressive" ? " ⚠" : ""}
             </Button>
           ))}
         </CardContent>

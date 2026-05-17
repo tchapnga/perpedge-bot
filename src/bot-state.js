@@ -9,7 +9,7 @@ const CB_MAX_CONSEC_LOSSES = Number.isFinite(Number(process.env.CIRCUIT_BREAKER_
   ? Number(process.env.CIRCUIT_BREAKER_MAX_LOSSES) : 3;
 
 const state = {
-  isPaused:         false,
+  pauseLevel:       'none',        // 'none' | 'entries' | 'all'
   mode:             'LIVE',        // 'LIVE' | 'SHADOW'
   emergencyStopped: false,
   tradeProfile:     'balanced',    // 'conservative' | 'balanced' | 'aggressive'
@@ -39,27 +39,32 @@ const state = {
 };
 
 // Getters
-export function getBotState() { return { ...state, modules: { ...state.modules } }; }
-export function isPaused()            { return state.isPaused; }
+export function getBotState() {
+  return {
+    ...state,
+    isPaused: state.pauseLevel !== 'none', // backward compat for status display
+    modules: { ...state.modules },
+  };
+}
+export function isEntryPaused()       { return state.pauseLevel !== 'none'; }
+export function isPausedAll()         { return state.pauseLevel === 'all'; }
 export function isEmergencyStopped()  { return state.emergencyStopped; }
 export function getMode()             { return state.mode; }
 export function getTradeProfile()     { return state.tradeProfile; }
 
 // Setters
-export function setPaused(v)          { state.isPaused = Boolean(v); }
+export function setPauseLevel(level)  { if (['none','entries','all'].includes(level)) state.pauseLevel = level; }
 export function setMode(m)            { if (['LIVE','SHADOW'].includes(m)) state.mode = m; }
 export function setTradeProfile(p)    { if (['conservative','balanced','aggressive'].includes(p)) state.tradeProfile = p; }
 
 export function setEmergencyStop() {
   state.emergencyStopped = true;
-  state.isPaused = true;
+  state.pauseLevel = 'all';
 }
 
-// FIX: clearEmergencyFlag ne reprend pas le bot automatiquement.
-// L'opérateur doit appeler setPaused(false) / RESUME explicitement après.
+// pauseLevel reste après reset — l'opérateur doit envoyer RESUME séparément.
 export function resetEmergencyStop() {
   state.emergencyStopped = false;
-  // isPaused reste true — l'opérateur doit envoyer RESUME séparément
 }
 
 export function setModuleEnabled(name, v) {
@@ -98,13 +103,13 @@ export function recordClosedTrade(pnlUsdt) {
     if (state.dailyPnlUsdt <= -CB_DAILY_LOSS_USDT) {
       state.circuitBreaker       = true;
       state.circuitBreakerReason = `Daily loss: ${state.dailyPnlUsdt.toFixed(2)} USDT (limit -${CB_DAILY_LOSS_USDT})`;
-      state.isPaused             = true;
+      state.pauseLevel           = 'all';
       return { tripped: true, reason: state.circuitBreakerReason };
     }
     if (state.consecutiveLosses >= CB_MAX_CONSEC_LOSSES) {
       state.circuitBreaker       = true;
       state.circuitBreakerReason = `${state.consecutiveLosses} pertes consécutives (limit ${CB_MAX_CONSEC_LOSSES})`;
-      state.isPaused             = true;
+      state.pauseLevel           = 'all';
       return { tripped: true, reason: state.circuitBreakerReason };
     }
   }

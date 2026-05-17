@@ -5,8 +5,8 @@ import fs                      from 'node:fs/promises';
 import path                    from 'node:path';
 import { config }               from './config.js';
 import {
-  getBotState, isPaused, isEmergencyStopped,
-  setPaused, setEmergencyStop, resetEmergencyStop, resetCircuitBreaker,
+  getBotState, isEmergencyStopped,
+  setPauseLevel, setEmergencyStop, resetEmergencyStop, resetCircuitBreaker,
   getTradeProfile, setTradeProfile,
 } from './bot-state.js';
 import { getSmartMoneyDetail } from './smart-money-scanner.js';
@@ -50,8 +50,9 @@ function buildStatusMessage() {
   const pnl = positions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0);
   const lastSignal = _getSignalLog()[0];
 
-  const modeLabel = state.emergencyStopped ? '🛑 EMERGENCY STOP'
-    : state.isPaused ? '⏸ PAUSED'
+  const modeLabel = state.emergencyStopped   ? '🛑 EMERGENCY STOP'
+    : state.pauseLevel === 'all'     ? '⏸ PAUSED ALL'
+    : state.pauseLevel === 'entries' ? '⏸ PAUSED ENTRIES'
     : `▶ ${state.mode}`;
 
   const posLines = positions.length
@@ -82,10 +83,10 @@ function buildInlineKeyboard(state) {
   const kb = new InlineKeyboard();
   if (state.emergencyStopped) {
     kb.text('🔄 Reset Emergency', 'cmd:reset_emergency');
-  } else if (state.isPaused) {
+  } else if (state.pauseLevel !== 'none') {
     kb.text('▶ Reprendre', 'cmd:resume');
   } else {
-    kb.text('⏸ Pause', 'cmd:pause');
+    kb.text('⏸ Pause Entrées', 'cmd:pause');
   }
   kb.text('🛑 Emergency Stop', 'cmd:emergency_confirm').row();
   // Bouton ouvrir cockpit si MINI_APP_URL configuré
@@ -156,8 +157,8 @@ export function startTelegramBot() {
 
   // ── /pause ────────────────────────────────────────────────────────────────
   bot.command('pause', async (ctx) => {
-    setPaused(true);
-    await ctx.reply('⏸ Bot en pause. Les nouvelles entrées sont bloquées.', { parse_mode: 'HTML' });
+    setPauseLevel('entries');
+    await ctx.reply('⏸ Nouvelles entrées bloquées (positions existantes gérées).', { parse_mode: 'HTML' });
   });
 
   // ── /resume ───────────────────────────────────────────────────────────────
@@ -171,7 +172,7 @@ export function startTelegramBot() {
       await ctx.reply(`⚠️ <b>Circuit Breaker actif</b>\n\n${st.circuitBreakerReason}\n\nUtilisez /resetcb d'abord, puis /resume.`, { parse_mode: 'HTML' });
       return;
     }
-    setPaused(false);
+    setPauseLevel('none');
     await ctx.reply('▶ Bot repris.', { parse_mode: 'HTML' });
   });
 
@@ -372,7 +373,7 @@ export function startTelegramBot() {
         await ctx.reply(`❌ <b>Bascule refusée</b>\n\n${stability.reason}\n\nFerme toutes les positions et ordres avant de basculer.`, { parse_mode: 'HTML' });
         return;
       }
-      setPaused(true);
+      setPauseLevel('all');
       await ctx.reply(`✅ Bot stable. Bascule vers <b>${target.toUpperCase()}</b> en cours...\n\n⚠️ Le bot va redémarrer dans 2 secondes.`, { parse_mode: 'HTML' });
       await updateEnvFile(wantTestnet);
       console.log(`[telegram-bot] Bascule ${target.toUpperCase()} — restart PM2 dans 1s`);
@@ -391,8 +392,8 @@ export function startTelegramBot() {
 
   // ── Callbacks inline keyboard ─────────────────────────────────────────────
   bot.callbackQuery('cmd:pause', async (ctx) => {
-    setPaused(true);
-    await ctx.answerCallbackQuery({ text: '⏸ Pause activée' });
+    setPauseLevel('entries');
+    await ctx.answerCallbackQuery({ text: '⏸ Pause entrées activée' });
     await ctx.editMessageReplyMarkup({ reply_markup: buildInlineKeyboard(getBotState()) });
   });
 
@@ -401,7 +402,7 @@ export function startTelegramBot() {
       await ctx.answerCallbackQuery({ text: '⚠️ Emergency Stop actif' });
       return;
     }
-    setPaused(false);
+    setPauseLevel('none');
     await ctx.answerCallbackQuery({ text: '▶ Bot repris' });
     await ctx.editMessageReplyMarkup({ reply_markup: buildInlineKeyboard(getBotState()) });
   });

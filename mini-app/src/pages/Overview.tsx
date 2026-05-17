@@ -1,12 +1,12 @@
 import { useRef, useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, BarChart2, Pause, Play, ShieldAlert, Target } from "lucide-react";
+import { AlertTriangle, BarChart2, Pause, Play, RefreshCw, ShieldAlert, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   type Command, type EquityPoint, type PositionWithType,
-  getEquity, getPositions, getRisk, getStatus, postCommand,
+  getEquity, getNetwork, getPositions, getRisk, getStatus, postCommand,
 } from "@/lib/api";
 import { useMyRole } from "@/hooks/useMyRole";
 
@@ -209,6 +209,8 @@ export default function Dashboard(): JSX.Element {
   const { data: positions, mutate: mutatePositions  } = useSWR("positionsWithType", getPositions, { refreshInterval: 5_000  });
   const { data: risk                               } = useSWR("/admin/risk", getRisk,      { refreshInterval: 30_000 });
   const { data: equity                             } = useSWR("equity",      getEquity,    { refreshInterval: 60_000 });
+  const { data: network, mutate: mutateNetwork, isValidating: networkLoading } =
+    useSWR("network", getNetwork, { refreshInterval: 0, revalidateOnFocus: false });
 
   const executeCommand = async (cmd: Command): Promise<void> => {
     setCommandError(null);
@@ -226,10 +228,11 @@ export default function Dashboard(): JSX.Element {
     }
   };
 
-  const isPaused = status?.isPaused ?? false;
-  const isEmerg  = status?.emergencyStopped ?? false;
-  const busy     = commandLoading !== null;
-  const profWarn = status?.tradeProfile === "aggressive";
+  const pauseLevel = status?.pauseLevel ?? (status?.isPaused ? "entries" : "none");
+  const isEmerg    = status?.emergencyStopped ?? false;
+  const isPaused   = pauseLevel !== "none";
+  const busy       = commandLoading !== null;
+  const profWarn   = status?.tradeProfile === "aggressive";
 
   return (
     <div className="space-y-4 px-4 py-5">
@@ -246,9 +249,11 @@ export default function Dashboard(): JSX.Element {
           </Badge>
           <Badge
             variant={isEmerg ? "destructive" : isPaused ? "secondary" : "success"}
-            className="text-xs"
+            className={`text-xs ${
+              !isEmerg && pauseLevel === "all" ? "border border-orange-500/60 bg-orange-950/30 text-orange-300" : ""
+            }`}
           >
-            {isEmerg ? "EMERGENCY" : isPaused ? "PAUSED" : "RUNNING"}
+            {isEmerg ? "EMERGENCY STOP" : pauseLevel === "all" ? "PAUSED ALL" : pauseLevel === "entries" ? "PAUSED ENTRIES" : "RUNNING"}
           </Badge>
           {status?.tradeProfile && (
             <Badge
@@ -257,6 +262,30 @@ export default function Dashboard(): JSX.Element {
             >
               {status.tradeProfile}{profWarn ? " ⚠" : ""}
             </Badge>
+          )}
+          {/* Badge réseau — chargé une fois, refresh manuel */}
+          {network ? (
+            <button
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-none transition-opacity ${
+                network.network === "TESTNET"
+                  ? "border-orange-500/60 bg-orange-950/40 text-orange-300"
+                  : "border-emerald-700/60 bg-emerald-950/30 text-emerald-400"
+              } ${networkLoading ? "opacity-50" : ""}`}
+              onClick={() => mutateNetwork()}
+              title="Cliquer pour rafraîchir"
+            >
+              {networkLoading ? <RefreshCw className="h-2.5 w-2.5 animate-spin" /> : null}
+              {network.network === "TESTNET" ? "TESTNET" : "MAINNET · REAL FUNDS"}
+            </button>
+          ) : (
+            <button
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-700/60 bg-zinc-900/40 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 leading-none"
+              onClick={() => mutateNetwork()}
+              title="Cliquer pour rafraîchir"
+            >
+              {networkLoading ? <RefreshCw className="h-2.5 w-2.5 animate-spin" /> : null}
+              NETWORK ?
+            </button>
           )}
         </div>
       </header>

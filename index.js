@@ -34,11 +34,11 @@ import { registerScalpTrade, startScalpManager, getScalpPositions } from './src/
 import { startAdminApi, injectAdminDeps } from './src/admin-api.js';
 import { startTelegramBot, stopTelegramBot, injectBotDeps } from './src/telegram-bot.js';
 import { startDailyReporter }              from './src/daily-reporter.js';
-import { recordCycle, recordSignal, recordTrade, isPaused, isEmergencyStopped, getMode } from './src/bot-state.js';
+import { recordCycle, recordSignal, recordTrade, isEntryPaused, isPausedAll, isEmergencyStopped, getMode } from './src/bot-state.js';
 
 async function runCycle() {
-  if (isPaused() || isEmergencyStopped()) {
-    console.log('[cycle] PAUSED — cycle ignoré.');
+  if (isEmergencyStopped() || isPausedAll()) {
+    console.log('[cycle] PAUSED ALL — cycle ignoré.');
     return;
   }
 
@@ -195,6 +195,10 @@ async function runCycle() {
 
     logSignal(result);
 
+    if (mode === 'LIVE' && isEntryPaused()) {
+      console.log(`[cycle] PAUSE_NEW_ENTRIES — ordre ${result.symbol} ignoré.`);
+      continue;
+    }
     if (mode === 'LIVE') {
       try {
         const levels = result._levels;

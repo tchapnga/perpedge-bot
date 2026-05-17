@@ -3,7 +3,7 @@ import { appendFile, readFile, writeFile } from 'fs/promises';
 import { exec }          from 'child_process';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { config }       from './config.js';
-import { getBotState, setPaused, setMode, setEmergencyStop, resetEmergencyStop, setModuleEnabled, getTradeProfile, setTradeProfile } from './bot-state.js';
+import { getBotState, setPauseLevel, setMode, setEmergencyStop, resetEmergencyStop, setModuleEnabled, getTradeProfile, setTradeProfile } from './bot-state.js';
 import { readAllTrades } from './trade-journal.js';
 import { reconcilePositions, forceClosePosition, bootReconcile } from './position-manager.js';
 
@@ -328,9 +328,9 @@ export async function startAdminApi() {
     if (!allowed.includes(command))
       return reply.code(400).send({ error: `Unknown command. Allowed: ${allowed.join(', ')}` });
     switch (command) {
-      case 'PAUSE_NEW_ENTRIES': setPaused(true);       break;
-      case 'PAUSE_ALL':         setPaused(true);       break;
-      case 'RESUME':            setPaused(false);      break;
+      case 'PAUSE_NEW_ENTRIES': setPauseLevel('entries'); break;
+      case 'PAUSE_ALL':         setPauseLevel('all');    break;
+      case 'RESUME':            setPauseLevel('none');   break;
       case 'EMERGENCY_STOP':    setEmergencyStop();    break;
       case 'RESET_EMERGENCY':   resetEmergencyStop();  break;
     }

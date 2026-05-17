@@ -3,7 +3,7 @@
 // Spec validée 3/3 LLMs 2026-05-17
 
 import WebSocket from 'ws';
-import { getBotState, getMode, isPaused, isEmergencyStopped } from './bot-state.js';
+import { getBotState, getMode, isEntryPaused, isEmergencyStopped } from './bot-state.js';
 import { buildCombinedMessage, sendTelegram, sendTelegramPhoto } from './notifier.js';
 import { captureChart, cleanChart }                           from './chart-capture.js';
 import { injectSignal, computeLevels }                        from './injector.js';
@@ -353,7 +353,7 @@ async function onConfirmed(sess) {
   await injectSignal(result).catch(err => console.error(`[cap-watcher] inject ${symbol}:`, err.message));
 
   // Garde pause/stop avant T1 (consensus 2/3 LLMs revue finale)
-  if (isPaused() || isEmergencyStopped() || !getBotState().modules.capitulation) {
+  if (isEntryPaused() || isEmergencyStopped() || !getBotState().modules.capitulation) {
     console.log(`[cap-watcher] T1 bloqué ${symbol} — bot paused/stopped`);
     return closeSession(symbol, 'paused_or_stopped');
   }
@@ -414,7 +414,7 @@ async function monitorReclaim(sess) {
     : null;
 
   // T2 : reclaim EMA15 + OI↑ + CVD+ (50% du budget)
-  const canAddRisk = !isPaused() && !isEmergencyStopped() && getBotState().modules.capitulation;
+  const canAddRisk = !isEntryPaused() && !isEmergencyStopped() && getBotState().modules.capitulation;
   if (!sess.t2Entered && sess.t1Entered && canAddRisk) {
     const minDelay = 60_000; // T2 au minimum 60s après T1 (empêche T1+T2 même tick)
     if (cvdSum > 0 && oiSlope > 0 && sma15 !== null && price > sma15 &&
