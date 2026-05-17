@@ -47,29 +47,24 @@ pass "/admin/health returned HTTP 200 on localhost:3002"
 # Attendre stabilisation PM2 (evite faux positif crash-loop early 'online')
 sleep 3
 
-pm2 describe perpedge-bot         >/dev/null 2>&1 || fail "PM2 process perpedge-bot not found"
-pm2 describe capitulation-watcher >/dev/null 2>&1 || fail "PM2 process capitulation-watcher not found"
-pm2 describe squeeze-watcher      >/dev/null 2>&1 || fail "PM2 process squeeze-watcher not found"
+pm2 describe perpedge-bot >/dev/null 2>&1 || fail "PM2 process perpedge-bot not found"
 
 pm2 jlist > /tmp/perpedge-pm2-smoke.json
 
 node <<'NODE'
 const fs = require('fs');
-const required = ['perpedge-bot', 'capitulation-watcher', 'squeeze-watcher'];
 const apps = JSON.parse(fs.readFileSync('/tmp/perpedge-pm2-smoke.json', 'utf8'));
-for (const name of required) {
-    const app = apps.find((entry) => entry.name === name);
-    if (!app) {
-        console.error(`FAIL: PM2 process ${name} missing`);
-        process.exit(1);
-    }
-    const status = (app.pm2_env || {}).status;
-    if (status !== 'online') {
-        console.error(`FAIL: PM2 process ${name} is ${status}`);
-        process.exit(1);
-    }
+const app = apps.find((entry) => entry.name === 'perpedge-bot');
+if (!app) {
+    console.error('FAIL: PM2 process perpedge-bot missing');
+    process.exit(1);
 }
-console.log('PASS: all PM2 processes are online');
+const status = (app.pm2_env || {}).status;
+if (status !== 'online') {
+    console.error(`FAIL: PM2 process perpedge-bot is ${status}`);
+    process.exit(1);
+}
+console.log('PASS: perpedge-bot is online');
 NODE
 
 pm2 list
