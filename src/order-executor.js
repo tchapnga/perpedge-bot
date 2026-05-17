@@ -185,9 +185,12 @@ export async function executeOrder(signal) {
 
     // P0.2 — Résolution de la taille de position (dynamique ou fallback)
     const availableBalance = await fetchAvailableBalance();
-    const positionSizeUsdt = (availableBalance !== null && availableBalance > 0)
+    const rawFraction  = Number(signal.extra?.risk_fraction);
+    const riskFraction = Number.isFinite(rawFraction) && rawFraction > 0 ? rawFraction : 1.0;
+    const baseSize = (availableBalance !== null && availableBalance > 0)
       ? availableBalance * (RISK_PCT / 100)
       : Number(process.env.POSITION_SIZE_USDT || DEFAULT_POSITION_SIZE_USDT);
+    const positionSizeUsdt = baseSize * riskFraction;
     const qty = calculateQuantity({ entry, stepSize, minQty, minNotional, reduceSize, positionSizeUsdt });
 
     // Double-check : détecte un changement de mode pendant les awaits de préparation

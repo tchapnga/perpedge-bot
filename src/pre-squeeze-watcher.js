@@ -53,6 +53,8 @@ const cooldowns = new Map();
 // ── Guard anti double-start (fix K) ───────────────────────────────────────────
 let _started = false;
 
+export function getPreSqueezeWatching() { return watching; }
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const cat = (sym) => MAJORS.has(sym) ? 'major' : 'alt';
