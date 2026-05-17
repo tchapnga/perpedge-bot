@@ -406,9 +406,10 @@ export default function Analyze(): JSX.Element {
                   <ScoreBar value={taScore} max={5} cls="bg-emerald-500" />
                   {taDetail.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 pt-0.5">
-                      {taDetail.map((d, i) => (
-                        <Badge key={i} variant={pillVariant(d)} className="px-2 py-0.5 text-xs font-mono">{d}</Badge>
-                      ))}
+                      {taDetail.map((d, i) => {
+                        const label = d.length > 40 ? d.slice(0, 37) + "…" : d;
+                        return <Badge key={i} variant={pillVariant(d)} title={d} className="px-2 py-0.5 text-xs font-mono max-w-[200px] truncate">{label}</Badge>;
+                      })}
                     </div>
                   )}
                 </CardContent>
@@ -427,9 +428,10 @@ export default function Analyze(): JSX.Element {
                   <ScoreBar value={derScore} max={5} cls="bg-sky-500" />
                   {derDetail.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 pt-0.5">
-                      {derDetail.map((d, i) => (
-                        <Badge key={i} variant={pillVariant(d)} className="px-2 py-0.5 text-xs font-mono">{d}</Badge>
-                      ))}
+                      {derDetail.map((d, i) => {
+                        const label = d.length > 40 ? d.slice(0, 37) + "…" : d;
+                        return <Badge key={i} variant={pillVariant(d)} title={d} className="px-2 py-0.5 text-xs font-mono max-w-[200px] truncate">{label}</Badge>;
+                      })}
                     </div>
                   )}
                 </CardContent>
@@ -489,25 +491,20 @@ export default function Analyze(): JSX.Element {
                   </CardContent>
                 </Card>
               ) : isBlocked ? (
-                <Card className="border-orange-900/50 bg-orange-950/20">
-                  <CardContent className="pt-4 space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium text-orange-300">
-                      <span>⛔</span>
-                      LLM non consulté
-                    </div>
+                <div className="rounded-xl border border-orange-900/50 bg-orange-950/20 px-3 py-2.5 space-y-1.5">
+                  <p className="text-xs font-medium text-orange-300">⛔ LLM non consulté</p>
+                  {!detail?.gate_block && (
                     <p className="text-xs text-muted-foreground leading-5">
-                      {String(
-                        detail?.gate_reason ?? detail?.veto_reason ?? "Conditions de marché défavorables — signal bloqué avant validation LLM."
-                      )}
+                      {String(detail?.veto_reason ?? "Signal bloqué avant validation LLM.")}
                     </p>
-                    <button
-                      onClick={() => setActiveTab("manual")}
-                      className="text-xs text-primary underline underline-offset-2"
-                    >
-                      Trader manuellement malgré tout →
-                    </button>
-                  </CardContent>
-                </Card>
+                  )}
+                  <button
+                    onClick={() => setActiveTab("manual")}
+                    className="text-xs text-primary underline underline-offset-2"
+                  >
+                    Trader manuellement malgré tout →
+                  </button>
+                </div>
               ) : null}
             </>
           )}
