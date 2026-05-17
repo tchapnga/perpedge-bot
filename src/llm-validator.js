@@ -187,18 +187,39 @@ function isJsonError(err) {
   );
 }
 
-async function callValidatorClaude(scoreResult, systemOverride = null) {
+const VALIDATOR_TOOL = {
+  name: 'validate_signal',
+  description: 'Valide un signal de trading et retourne la décision structurée.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      decision:   { type: 'string', enum: ['APPROVE', 'REJECT', 'CONTRARIAN_FLIP', 'PENDING'] },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+      reasoning:  { type: 'string', description: 'Max 200 chars' },
+      warnings:   { type: 'array', items: { type: 'string' } },
+    },
+    required: ['decision', 'confidence', 'reasoning', 'warnings'],
+  },
+};
+
+async function callValidatorClaude(scoreResult) {
   if (!anthropic) throw new Error('ANTHROPIC_API_KEY absent');
   let lastErr;
   for (let attempt = 0; attempt <= TIMEOUT_RETRIES; attempt += 1) {
     try {
       const msg = await anthropic.messages.create(
-        { model: MODEL, temperature: 0.1, max_tokens: 300,
-          system: systemOverride ?? SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: JSON.stringify(scoreResult) }] },
+        {
+          model: MODEL, temperature: 0, max_tokens: 512,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: JSON.stringify(scoreResult) }],
+          tools: [VALIDATOR_TOOL],
+          tool_choice: { type: 'any' },
+        },
         { signal: AbortSignal.timeout(TIMEOUT_MS) },
       );
-      return normalizeDecision(extractJson(extractTextContent(msg)));
+      const toolUse = msg.content.find(b => b?.type === 'tool_use');
+      if (!toolUse) throw new Error('No tool_use block in Claude response');
+      return normalizeDecision(toolUse.input);
     } catch (err) {
       lastErr = err;
       if (!isTimeoutError(err) || attempt === TIMEOUT_RETRIES) throw err;
@@ -392,27 +413,9 @@ export async function validateSignal(scoreResult) {
     }
   }
 
-  // VPS mode — Claude API avec retry timeout (BUG-3) + retry JSON system override (BUG-4)
+  // VPS mode — Claude API avec tool_use (JSON structuré garanti) + retry timeout
   try {
-    let validation;
-    try {
-      validation = await callValidatorClaude(scoreResult);
-    } catch (err) {
-      if (isJsonError(err)) {
-        try {
-          const strictJsonSystem = `${SYSTEM_PROMPT}\n\nCRITICAL: Réponds UNIQUEMENT avec du JSON brut valide. N'utilise pas de markdown. N'ajoute aucun texte avant ou après le JSON.`;
-          validation = await callValidatorClaude(scoreResult, strictJsonSystem);
-        } catch (retryErr) {
-          if (isJsonError(retryErr)) {
-            validation = failOpen('Claude JSON parsing failed after strict JSON retry');
-          } else {
-            throw retryErr;
-          }
-        }
-      } else {
-        throw err;
-      }
-    }
+    const validation = await callValidatorClaude(scoreResult);
     logDecision(scoreResult, validation, 'claude');
     return validation;
   } catch (err) {
