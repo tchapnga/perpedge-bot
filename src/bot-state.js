@@ -12,6 +12,7 @@ const state = {
   isPaused:         false,
   mode:             'LIVE',        // 'LIVE' | 'SHADOW'
   emergencyStopped: false,
+  tradeProfile:     'balanced',    // 'conservative' | 'balanced' | 'aggressive'
 
   modules: {
     scalp:         true,
@@ -42,10 +43,12 @@ export function getBotState() { return { ...state, modules: { ...state.modules }
 export function isPaused()            { return state.isPaused; }
 export function isEmergencyStopped()  { return state.emergencyStopped; }
 export function getMode()             { return state.mode; }
+export function getTradeProfile()     { return state.tradeProfile; }
 
 // Setters
 export function setPaused(v)          { state.isPaused = Boolean(v); }
 export function setMode(m)            { if (['LIVE','SHADOW'].includes(m)) state.mode = m; }
+export function setTradeProfile(p)    { if (['conservative','balanced','aggressive'].includes(p)) state.tradeProfile = p; }
 
 export function setEmergencyStop() {
   state.emergencyStopped = true;

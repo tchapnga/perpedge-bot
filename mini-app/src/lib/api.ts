@@ -36,6 +36,7 @@ declare global {
 
 export type BotMode = "LIVE" | "SHADOW" | "DRY_RUN";
 export type NetworkEnv = "TESTNET" | "MAINNET";
+export type TradeProfile = "conservative" | "balanced" | "aggressive";
 
 export interface NetworkStatus {
   network: NetworkEnv;
@@ -61,6 +62,7 @@ export interface BotStatus {
   tradesExecuted: number;
   openPositions: number;
   unrealizedPnl: number;
+  tradeProfile?: TradeProfile;
   modules?: Record<string, boolean>;
   lastCycleAt?: string | null;
   startedAt?: string;
@@ -174,7 +176,7 @@ export function analyzeSymbol(symbol: string, timeoutMs = 30000): Promise<Analyz
   }).finally(() => window.clearTimeout(timeoutId));
 }
 
-export function patchConfig(body: { mode?: BotMode }): Promise<{ ok: boolean; state: BotStatus }> {
+export function patchConfig(body: { mode?: BotMode; tradeProfile?: TradeProfile }): Promise<{ ok: boolean; state: BotStatus }> {
   return request<{ ok: boolean; state: BotStatus }>("/admin/config", {
     method: "PATCH",
     body,

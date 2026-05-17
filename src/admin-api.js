@@ -3,7 +3,7 @@ import { appendFile, readFile, writeFile } from 'fs/promises';
 import { exec }          from 'child_process';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { config }       from './config.js';
-import { getBotState, setPaused, setMode, setEmergencyStop, resetEmergencyStop, setModuleEnabled } from './bot-state.js';
+import { getBotState, setPaused, setMode, setEmergencyStop, resetEmergencyStop, setModuleEnabled, getTradeProfile, setTradeProfile } from './bot-state.js';
 import { readAllTrades } from './trade-journal.js';
 import { reconcilePositions, forceClosePosition, bootReconcile } from './position-manager.js';
 
@@ -365,15 +365,22 @@ export async function startAdminApi() {
     MIN_SCORE:          config.minScore,
     LLM_MODE:           process.env.LLM_MODE ?? 'auto',
     MODE:               getBotState().mode,
+    tradeProfile:       getTradeProfile(),
   }));
 
   app.patch('/admin/config', { preHandler: [requireRole('OPERATOR')] }, async (req, reply) => {
-    const { mode } = req.body ?? {};
+    const { mode, tradeProfile } = req.body ?? {};
     if (mode) {
       const valid = ['LIVE','SHADOW'].includes(mode);
       if (!valid) return reply.code(400).send({ error: 'Invalid mode. Allowed: LIVE, SHADOW' });
       setMode(mode);
       await audit('SET_MODE', req.adminUserId, { mode });
+    }
+    if (tradeProfile !== undefined) {
+      const valid = ['conservative','balanced','aggressive'].includes(tradeProfile);
+      if (!valid) return reply.code(400).send({ error: 'Invalid tradeProfile. Allowed: conservative, balanced, aggressive' });
+      setTradeProfile(tradeProfile);
+      await audit('SET_TRADE_PROFILE', req.adminUserId, { tradeProfile });
     }
     return { ok: true, state: getBotState() };
   });

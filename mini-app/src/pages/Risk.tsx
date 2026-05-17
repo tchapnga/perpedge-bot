@@ -1,7 +1,10 @@
 import useSWR from "swr";
+import { useState } from "react";
 import { Activity, BarChart3, Gauge, ShieldAlert, Sigma, Target } from "lucide-react";
-import { type RiskData, getRisk } from "@/lib/api";
+import { type RiskData, type TradeProfile, type BotStatus, getRisk, getStatus, patchConfig } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 function fmt(v: number, d = 2): string {
   return Number.isFinite(v) ? v.toFixed(d) : "0.00";
@@ -41,10 +44,104 @@ function MetricCard({ label, value, helper, danger = false, icon }: MetricCardPr
   );
 }
 
+const PROFILE_OPTIONS: { value: TradeProfile; label: string; desc: string }[] = [
+  { value: "conservative", label: "🌱 Conservateur", desc: "Spot DCA uniquement" },
+  { value: "balanced",     label: "⚖️ Équilibré",    desc: "Perp ou Spot selon indicateurs" },
+  { value: "aggressive",   label: "🔥 Agressif",     desc: "Perp + Spot (0.5× chacun)" },
+];
+
+function ProfileSelector({ current, onSave }: { current: TradeProfile; onSave: (p: TradeProfile) => Promise<void> }): JSX.Element {
+  const [pending, setPending] = useState<TradeProfile | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const handleSelect = (p: TradeProfile) => {
+    if (p === "aggressive") {
+      setPending(p);
+      setConfirmOpen(true);
+    } else {
+      void save(p);
+    }
+  };
+
+  const save = async (p: TradeProfile) => {
+    setSaving(true);
+    try { await onSave(p); } finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Profil de risque Smart Money</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {PROFILE_OPTIONS.map((opt) => {
+            const active = current === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => handleSelect(opt.value)}
+                disabled={saving}
+                className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                  active
+                    ? "border-emerald-500 bg-emerald-950/40 text-emerald-300"
+                    : "border-border bg-card text-muted-foreground hover:border-emerald-700"
+                }`}
+              >
+                <div className="text-sm font-medium">{opt.label}</div>
+                <div className="text-xs opacity-70">{opt.desc}</div>
+              </button>
+            );
+          })}
+          <p className="text-xs text-muted-foreground pt-1">
+            Le profil revient à <b>Équilibré</b> au redémarrage du bot.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>⚠️ Profil Agressif</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Ce profil déclenche <b>Perp + Spot DCA simultanément</b> à <b>0.5× taille normale</b> pour chaque ordre Smart Money (exposition totale 1.0×).
+          </p>
+          <p className="text-sm text-muted-foreground mt-2">
+            Le circuit breaker reste actif et stoppera automatiquement le bot en cas de perte excessive.
+          </p>
+          <DialogFooter className="gap-2 mt-4">
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)}>Annuler</Button>
+            <Button
+              onClick={async () => {
+                setConfirmOpen(false);
+                if (pending) await save(pending);
+              }}
+            >
+              Confirmer Agressif
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export default function Risk(): JSX.Element {
   const { data, error, isLoading } = useSWR<RiskData>("/admin/risk", getRisk, {
     refreshInterval: 30_000,
   });
+  const { data: status, mutate: mutateStatus } = useSWR<BotStatus>("/admin/status", getStatus, {
+    refreshInterval: 30_000,
+  });
+
+  const currentProfile: TradeProfile = status?.tradeProfile ?? "balanced";
+
+  const handleProfileSave = async (profile: TradeProfile) => {
+    await patchConfig({ tradeProfile: profile });
+    await mutateStatus();
+  };
 
   const winRateDanger  = (data?.winRate ?? 100) < 40;
   const drawdownDanger = (data?.maxDrawdown ?? 0) > 15;
@@ -128,6 +225,8 @@ export default function Risk(): JSX.Element {
               </div>
             </CardContent>
           </Card>
+
+          <ProfileSelector current={currentProfile} onSave={handleProfileSave} />
         </>
       ) : null}
     </div>

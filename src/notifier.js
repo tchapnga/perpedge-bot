@@ -229,7 +229,7 @@ export function buildCrowdedUnwindMessage(result, triggerLabel) {
   ].filter(l => l !== '').join('\n');
 }
 
-export async function sendTelegram(text) {
+export async function sendTelegram(text, extra = {}) {
   if (!config.telegramBotToken || !config.telegramChatId) {
     console.log('[notifier] Telegram not configured — printing to console:\n', text);
     return;
@@ -242,6 +242,7 @@ export async function sendTelegram(text) {
       chat_id:    config.telegramChatId,
       text,
       parse_mode: 'HTML',
+      ...extra,
     }),
     signal: AbortSignal.timeout(8000),
   });

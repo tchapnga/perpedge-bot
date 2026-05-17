@@ -7,7 +7,9 @@ import { config }               from './config.js';
 import {
   getBotState, isPaused, isEmergencyStopped,
   setPaused, setEmergencyStop, resetEmergencyStop, resetCircuitBreaker,
+  getTradeProfile, setTradeProfile,
 } from './bot-state.js';
+import { getSmartMoneyDetail } from './smart-money-scanner.js';
 import { reconcilePositions, checkStability } from './position-manager.js';
 import { readAllTrades }      from './trade-journal.js';
 
@@ -138,7 +140,7 @@ export function startTelegramBot() {
   // ── /start ────────────────────────────────────────────────────────────────
   bot.command('start', async (ctx) => {
     await ctx.reply(
-      `👋 <b>PerpEdge Admin Bot</b>\n\nCommandes disponibles :\n/status — état du bot\n/pause — pause nouvelles entrées\n/resume — reprendre\n/stop — arrêt d'urgence\n/resetcb — réarmer le circuit breaker\n/testnet — basculer en TESTNET (si stable)\n/mainnet — basculer en MAINNET (si stable)\n/reconcile — réconciliation positions\n/export — export CSV des trades`,
+      `👋 <b>PerpEdge Admin Bot</b>\n\nCommandes disponibles :\n/status — état du bot\n/pause — pause nouvelles entrées\n/resume — reprendre\n/stop — arrêt d'urgence\n/resetcb — réarmer le circuit breaker\n/profile — profil de risque Smart Money\n/testnet — basculer en TESTNET (si stable)\n/mainnet — basculer en MAINNET (si stable)\n/reconcile — réconciliation positions\n/export — export CSV des trades`,
       { parse_mode: 'HTML' }
     );
   });
@@ -185,6 +187,139 @@ export function startTelegramBot() {
       `🔄 <b>Circuit Breaker réinitialisé.</b>\n\nRaison précédente : ${st.circuitBreakerReason}\n\n<b>Le bot reste en PAUSE.</b> Envoyez /resume pour reprendre les cycles.`,
       { parse_mode: 'HTML' }
     );
+  });
+
+  // ── /profile — profil de risque Smart Money ──────────────────────────────
+  const PROFILE_LABELS = {
+    conservative: '🌱 Conservateur — Spot DCA uniquement',
+    balanced:     '⚖️ Équilibré — Perp ou Spot selon indicateurs',
+    aggressive:   '🔥 Agressif — Perp + Spot simultanés (0.5x chacun)',
+  };
+  const pendingAggressiveConfirm = new Map(); // userId → timestamp
+
+  // Cleanup auto
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of pendingAggressiveConfirm) {
+      if (now - v > 60_000) pendingAggressiveConfirm.delete(k);
+    }
+  }, 60_000);
+
+  bot.command('profile', async (ctx) => {
+    const arg = ctx.match?.trim().toLowerCase();
+    const current = getTradeProfile();
+    const st = getBotState();
+
+    if (!arg) {
+      const kb = new InlineKeyboard()
+        .text('🌱 Conservateur', 'profile:set:conservative').row()
+        .text('⚖️ Équilibré',    'profile:set:balanced').row()
+        .text('🔥 Agressif',     'profile:set:aggressive');
+      const zoneDesc = {
+        conservative: '→ Zone Rouge/Grise/Verte : Spot toujours',
+        balanced:     '→ Zone Rouge : Spot · Zone Grise : Perp si score≥5 · Zone Verte : Perp ou Spot',
+        aggressive:   '→ Zone Rouge : Spot · Zone Grise : Perp si score≥5 · Zone Verte : Perp+Spot (0.5x)',
+      };
+      await ctx.reply(
+        `📊 <b>Profil de risque Smart Money</b>\n\nActif : <b>${PROFILE_LABELS[current] ?? current}</b>\n\n${zoneDesc[current] ?? ''}\n\n<i>Circuit breaker : stop auto si perte > ${st.circuitBreakerReason ?? `${process.env.CIRCUIT_BREAKER_DAILY_LOSS_USDT ?? 50} USDT`}</i>`,
+        { parse_mode: 'HTML', reply_markup: kb }
+      );
+      return;
+    }
+
+    const validProfiles = { conservative: true, balanced: true, aggressive: true };
+    if (!validProfiles[arg]) {
+      await ctx.reply('❌ Profil inconnu. Options : conservative · balanced · aggressive', { parse_mode: 'HTML' });
+      return;
+    }
+
+    if (arg === 'aggressive') {
+      const userId = String(ctx.from?.id ?? 'unknown');
+      pendingAggressiveConfirm.set(userId, Date.now());
+      const cbLimit = process.env.CIRCUIT_BREAKER_DAILY_LOSS_USDT ?? 50;
+      const kb = new InlineKeyboard()
+        .text('✅ Confirmer Agressif', 'profile:confirm:aggressive')
+        .text('❌ Annuler', 'profile:cancel');
+      await ctx.reply(
+        `⚠️ <b>Profil Agressif — Confirmation requise</b>\n\nCe profil déclenche <b>Perp + Spot DCA simultanément</b> à 0.5× taille normale.\nExposition totale : 1.0× par signal Smart Money.\n\n🛡️ Circuit breaker : stop auto si perte > <b>${cbLimit} USDT/jour</b>\n\n<i>La confirmation vaut pour toutes les positions futures jusqu'au prochain changement de profil.</i>`,
+        { parse_mode: 'HTML', reply_markup: kb }
+      );
+      return;
+    }
+
+    setTradeProfile(arg);
+    await ctx.reply(`✅ Profil mis à jour : <b>${PROFILE_LABELS[arg]}</b>`, { parse_mode: 'HTML' });
+  });
+
+  // ── Callbacks inline — profile + smart money detail ──────────────────────
+  bot.callbackQuery(/^profile:set:(.+)$/, async (ctx) => {
+    const profile = ctx.match[1];
+    if (!['conservative','balanced','aggressive'].includes(profile)) {
+      await ctx.answerCallbackQuery('Profil inconnu');
+      return;
+    }
+    if (profile === 'aggressive') {
+      const userId = String(ctx.from?.id ?? 'unknown');
+      pendingAggressiveConfirm.set(userId, Date.now());
+      const cbLimit = process.env.CIRCUIT_BREAKER_DAILY_LOSS_USDT ?? 50;
+      const kb = new InlineKeyboard()
+        .text('✅ Confirmer Agressif', 'profile:confirm:aggressive')
+        .text('❌ Annuler', 'profile:cancel');
+      await ctx.editMessageText(
+        `⚠️ <b>Profil Agressif — Confirmation requise</b>\n\nPerp + Spot DCA simultanément à 0.5× chacun.\nCircuit breaker : stop auto si perte > <b>${cbLimit} USDT/jour</b>`,
+        { parse_mode: 'HTML', reply_markup: kb }
+      );
+    } else {
+      setTradeProfile(profile);
+      await ctx.editMessageText(`✅ Profil mis à jour : <b>${PROFILE_LABELS[profile]}</b>`, { parse_mode: 'HTML' });
+    }
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery('profile:confirm:aggressive', async (ctx) => {
+    const userId = String(ctx.from?.id ?? 'unknown');
+    const ts = pendingAggressiveConfirm.get(userId);
+    if (!ts || Date.now() - ts > 60_000) {
+      pendingAggressiveConfirm.delete(userId);
+      await ctx.answerCallbackQuery('⏱ Confirmation expirée — relancez /profile');
+      return;
+    }
+    pendingAggressiveConfirm.delete(userId);
+    setTradeProfile('aggressive');
+    await ctx.editMessageText(`✅ Profil <b>Agressif</b> activé — Perp + Spot DCA simultanés à 0.5× chacun.`, { parse_mode: 'HTML' });
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery('profile:cancel', async (ctx) => {
+    await ctx.editMessageText(`ℹ️ Changement de profil annulé. Profil actif : <b>${PROFILE_LABELS[getTradeProfile()]}</b>`, { parse_mode: 'HTML' });
+    await ctx.answerCallbackQuery();
+  });
+
+  // Callback détail Smart Money signal (sm:d:{shortId})
+  bot.callbackQuery(/^sm:d:(.+)$/, async (ctx) => {
+    const shortId = ctx.match[1];
+    const detail = getSmartMoneyDetail(shortId);
+    if (!detail) {
+      await ctx.answerCallbackQuery('⏱ Détail expiré (>15 min)');
+      return;
+    }
+    const zoneEmoji = { RED: '🔴', GREY: '🟡', GREEN: '🟢', UNKNOWN: '⚪' };
+    const lines = [
+      `📊 <b>Indicateurs Smart Money</b>  ·  ${detail.symbol}`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `Score : <b>${detail.score}/6</b>`,
+      `CVD 4h : <code>${(detail.cvdChange4h * 100).toFixed(2)}%</code>`,
+      `Basis : ${detail.basisBullish ? '📈 Haussier' : '➡️ Neutre'}`,
+      `MSB 15m : ${detail.msb15m ? '✅' : '❌'}  ·  MSB 1h : ${detail.msb1h ? '✅' : '❌'}`,
+      `OI : <i>${detail.oiRegime}</i>`,
+      `Funding : <code>${detail.fundingRate !== null ? (detail.fundingRate * 100).toFixed(4) : 'N/A'}%</code>  →  Zone ${zoneEmoji[detail.zone] ?? ''} ${detail.zone}`,
+      ``,
+      `Profil : <b>${PROFILE_LABELS[detail.profile] ?? detail.profile}</b>`,
+      `Décision : <i>${detail.reason}</i>`,
+      detail.execPerp && detail.execSpot ? `Size : Perp ${detail.perpSizeMultiplier}× · Spot ${detail.spotSizeMultiplier}×` : '',
+    ].filter(Boolean);
+    await ctx.answerCallbackQuery();
+    await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
   });
 
   // ── /stop (Emergency Stop) ────────────────────────────────────────────────
