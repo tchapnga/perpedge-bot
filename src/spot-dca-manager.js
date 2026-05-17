@@ -1,5 +1,6 @@
 // Spot DCA Manager — accumulation en 3 tranches à prix dégressifs
 // checkFills() spec validée 3/3 LLMs 2026-05-17
+// C2 revue code 3/3 LLMs 2026-05-17 — clamp sizeMultiplier : 0 → skip (ne plus silently→1.0)
 // Guard BINANCE_TESTNET validé 3/3 LLMs 2026-05-17 (B+D dans startDCA)
 import { getSpotOrderStatus, placeSpotBuy, cancelSpotOrder } from './spot-executor.js';
 import { sendTelegram } from './notifier.js';
@@ -53,7 +54,7 @@ async function _closeSession(symbol, endReason) {
   console.log(`[spot-dca] Session fermée ${symbol} — ${endReason}`);
 }
 
-export async function startDCA(symbol, markPrice) {
+export async function startDCA(symbol, markPrice, sizeMultiplier = 1.0) {
   // Guard défensif (Option B+D — consensus 3/3 LLMs 2026-05-17)
   // Binance Spot API n'a pas de testnet — bloquer si BINANCE_TESTNET=true ou ENABLE_SPOT_LIVE_TRADING!=true
   if (isSpotTradingBlocked()) {
@@ -73,7 +74,14 @@ export async function startDCA(symbol, markPrice) {
     return;
   }
 
-  const trancheUsdt    = DEFAULT_TOTAL_USDT / TRANCHE_COUNT;
+  // C2 : sizeMultiplier=0 ou invalide → skip (0 signifie "ne pas trader") — revue code 3/3 LLMs 2026-05-17
+  const sizeNum = Number(sizeMultiplier);
+  if (!Number.isFinite(sizeNum) || sizeNum <= 0) {
+    console.warn(`[spot-dca] skipped ${symbol}: invalid sizeMultiplier=${sizeMultiplier}`);
+    return;
+  }
+  const clampedMultiplier = Math.min(1.0, sizeNum);
+  const trancheUsdt    = (DEFAULT_TOTAL_USDT * clampedMultiplier) / TRANCHE_COUNT;
   const tranches       = [];
   let totalExecutedQty = 0;
   let totalQuoteSpent  = 0;

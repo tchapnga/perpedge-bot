@@ -1,10 +1,11 @@
 // smart-money-scanner.js v2 — Spec validée 3/3 LLMs 2026-05-17
-// Revue code 3/3 LLMs 2026-05-17 — 9 corrections appliquées
+// Revue code round 1 : 3/3 LLMs 2026-05-17 — 9 corrections appliquées
+// Revue code round 2 : 3/3 LLMs 2026-05-17 — C1-C7 appliqués (fallback zones, borne <=, safeProfile, shortId)
 // Guard BINANCE_TESTNET validé 3/3 LLMs 2026-05-17 (Option A dans canTradeLive)
 // Signal: CVD bullish divergence + spot/perp basis premium + MSB 15m
 // Philosophie: smart money accumule spot avant push perp
 
-import { getBotState, getMode, isPaused, isEmergencyStopped, recordTrade } from './bot-state.js';
+import { getBotState, getMode, isPaused, isEmergencyStopped, recordTrade, getTradeProfile } from './bot-state.js';
 import { isTestnet as _isTestnet } from './utils/guards.js';
 import { startDCA } from './spot-dca-manager.js';
 import { sendTelegram } from './notifier.js';
@@ -36,15 +37,80 @@ const OI_STABLE_HI     =  0.020;
 const OI_BULL_MIN      =  0.050;
 
 // Funding
-const FUNDING_SCORE_LO = -0.0002;
-const FUNDING_SCORE_HI = -0.0005;
+const FUNDING_SCORE_LO  = -0.0002;
+const FUNDING_SCORE_HI  = -0.0005;
+
+// 3-zone engine — seuils funding (spec V2 validée 3/3 LLMs 2026-05-17)
+const FUNDING_ZONE_RED  = -0.0008;  // < RED → Spot only
+const FUNDING_ZONE_GREY = -0.0005;  // [RED, GREY) → conditionnel au score
+const GREY_PERP_SCORE   = 5;        // score minimum pour Perp en zone grise
 
 // Score seuils
 const SCORE_PERP       = 4;
 const SCORE_SPOT       = 3;
 
-const cooldowns = new Map();
+const cooldowns   = new Map();
+const detailCache = new Map(); // shortId → { signalData, ts } TTL 15min
+const DETAIL_TTL  = 15 * 60_000;
 let scannerStarted = false; // singleton module-level (correction revue code #9)
+
+// C5 — shortId unique : compteur séquentiel + timestamp base36 (revue code 3/3 LLMs 2026-05-17)
+let _signalSeq = 0;
+function buildShortId(symbol) {
+  _signalSeq = (_signalSeq + 1) % 46656;
+  const clean = String(symbol ?? 'UNK').replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 8);
+  return `${clean}-${Date.now().toString(36)}-${_signalSeq.toString(36).padStart(3, '0')}`;
+}
+
+// ─── Moteur 3 zones — spec V2 validée 3/3 LLMs, corrections C3/C4 revue code 2026-05-17 ──
+// Pure function : passe (data, profile), ne lit PAS l'état interne
+export function resolveSmartMoneyDecision({ funding, score, fundingSpotPriority }, profile) {
+  // C4 : profile invalide → 'conservative' (plus défensif que 'balanced')
+  const safeProfile = ['conservative', 'balanced', 'aggressive'].includes(profile) ? profile : 'conservative';
+
+  // Funding invalide → UNKNOWN, Spot only
+  if (!Number.isFinite(funding)) {
+    return { perp: false, spot: true, zone: 'UNKNOWN', profile: safeProfile,
+      reason: 'Funding indisponible — Spot uniquement',
+      perpSizeMultiplier: 0, spotSizeMultiplier: 1 };
+  }
+
+  // Zone Rouge — Spot ONLY (tous profils), C3: <= (funding=-0.0008 → RED, pas GREY)
+  if (funding <= FUNDING_ZONE_RED) {
+    return { perp: false, spot: true, zone: 'RED', profile: safeProfile,
+      reason: `Funding ${(funding * 100).toFixed(4)}% — zone rouge — Spot uniquement`,
+      perpSizeMultiplier: 0, spotSizeMultiplier: 1 };
+  }
+
+  // Zone Grise — override profile (y compris aggressive)
+  if (funding < FUNDING_ZONE_GREY) {
+    const usePerp = score >= GREY_PERP_SCORE;
+    return { perp: usePerp, spot: !usePerp, zone: 'GREY', profile: safeProfile,
+      reason: usePerp
+        ? `Zone grise · Score ${score} ≥ ${GREY_PERP_SCORE} — Perp`
+        : `Zone grise · Score ${score} < ${GREY_PERP_SCORE} — Spot`,
+      perpSizeMultiplier: usePerp ? 1 : 0, spotSizeMultiplier: usePerp ? 0 : 1 };
+  }
+
+  // Zone Verte — selon profil
+  if (safeProfile === 'conservative') {
+    return { perp: false, spot: true, zone: 'GREEN', profile: safeProfile,
+      reason: 'Profil Conservateur — Spot uniquement',
+      perpSizeMultiplier: 0, spotSizeMultiplier: 1 };
+  }
+  if (safeProfile === 'aggressive') {
+    return { perp: true, spot: true, zone: 'GREEN', profile: safeProfile,
+      reason: 'Profil Agressif — Perp + Spot (0.5x chacun)',
+      perpSizeMultiplier: 0.5, spotSizeMultiplier: 0.5 };
+  }
+  // balanced — exclusif selon fundingSpotPriority
+  const preferSpot = fundingSpotPriority === true;
+  return { perp: !preferSpot, spot: preferSpot, zone: 'GREEN', profile: safeProfile,
+    reason: preferSpot
+      ? 'Profil Équilibré — Spot (funding spot prioritaire)'
+      : 'Profil Équilibré — Perp (basis bullish, funding neutre)',
+    perpSizeMultiplier: preferSpot ? 0 : 1, spotSizeMultiplier: preferSpot ? 1 : 0 };
+}
 
 // ─── Fetch candidats — top USDT perps par volume ──────────────────────────────
 async function fetchCandidates() {
@@ -242,65 +308,140 @@ async function scanSmartMoney() {
     });
     if (!data) return;
 
-    const capActive  = isCapWatcherActive(symbol);
-    const perpSignal = data.score >= SCORE_PERP
+    // C6 : capActive = capitulation watcher actif → bloque TOUT trading (perp + spot) — comportement voulu
+    const capActive = isCapWatcherActive(symbol);
+
+    // Garde qualité signal (inchangés — condition nécessaire avant routing)
+    const perpReady = data.score >= SCORE_PERP
       && data.cvdStrongDivergence
       && data.basisBullish
       && data.msb15m
-      && data.fundingPerpAllowed
       && !capActive;
 
-    const spotSignal = data.score >= SCORE_SPOT
+    const spotReady = data.score >= SCORE_SPOT
       && (data.cvdAbsorption || data.cvdStrongDivergence)
       && !capActive;
 
-    if (!perpSignal && !spotSignal) return;
+    if (!perpReady && !spotReady) return;
 
-    console.log(`[smart-money] 💎 ${symbol} score=${data.score}/6 perp=${perpSignal} spot=${spotSignal} cap=${capActive} — ${data.detail.join(' | ')}`);
-    cooldowns.set(symbol, now + COOLDOWN_MS);
+    // Moteur 3 zones — routing funding × profil (spec V2)
+    const decision = resolveSmartMoneyDecision(
+      { funding: data.fr, score: data.score, fundingSpotPriority: data.fundingSpotPriority },
+      getTradeProfile()
+    );
 
-    const lines = [
-      `💎 <b>SMART MONEY</b>  ·  ${symbol}`,
-      `━━━━━━━━━━━━━━━━━━━━`,
-      `Score <b>${data.score}/6</b>  ·  <i>${data.detail.join(' · ')}</i>`,
-      `Prix <code>$${lastPrice.toFixed(4)}</code>  ·  Basis <code>${(data.basis * 100).toFixed(3)}%</code>`,
-      `CVD4h <code>${(data.cvdChange4h * 100).toFixed(2)}%</code>  ·  Δprix4h <code>${(data.priceChange4h * 100).toFixed(2)}%</code>`,
-      `MSB15m <b>${data.msb15m ? '✅' : '❌'}</b>  ·  MSB1h <b>${data.msb1h ? '✅' : '❌'}</b>  ·  OI <i>${data.oiRegime}</i>`,
-    ];
-    if (perpSignal) lines.push(`\n⚡ <b>PERP LONG</b> — CVD div + basis + MSB15m + funding ✅`);
-    if (spotSignal && data.fundingSpotPriority) lines.push(`\n💰 <b>SPOT DCA prioritaire</b> — funding extrême <code>${(data.fr * 100).toFixed(4)}%</code>`);
-    else if (spotSignal)                        lines.push(`\n💰 <b>SPOT DCA</b>`);
-    if (!data.fundingAvailable) lines.push(`\n⚠️ <i>Funding API indisponible — perp bloqué</i>`);
-    lines.push(`\n<i>⚠️ Accumulation smart money — pas de trade perp sans confirmation manuelle sauf LIVE</i>`);
+    // C1 — Appliquer les gardes qualité + fallback par zone (revue code 3/3 LLMs 2026-05-17)
+    let execPerp = decision.perp && perpReady;
+    let execSpot  = decision.spot && spotReady;
 
-    try { await sendTelegram(lines.join('\n')); }
-    catch (err) { console.error(`[smart-money] Telegram ${symbol}:`, err.message); }
-
-    // Garde canTradeLive — exclut testnet (Option A, 3/3 LLMs 2026-05-17)
-    // Binance Spot n'a pas de testnet : si BINANCE_TESTNET=true, bloquer DCA ET perp simulé
-    const canTradeLive = mode === 'LIVE' && !isPaused() && !isEmergencyStopped() && !_isTestnet();
-
-    if (spotSignal) {
-      if (canTradeLive) {
-        await startDCA(symbol, lastPrice).catch(err =>
-          console.error(`[smart-money] startDCA ${symbol}:`, err.message)
-        );
+    if (!execPerp && !execSpot) {
+      // Route préférée non disponible — fallback par zone (ne contourne pas les règles métier)
+      if (decision.zone === 'RED' || decision.zone === 'UNKNOWN') {
+        // Funding dangereux/indisponible : Spot uniquement si prêt
+        if (spotReady) execSpot = true;
+        else return;
+      } else if (decision.zone === 'GREY') {
+        // Zone grise : fallback Spot uniquement (ne pas contourner GREY_PERP_SCORE via Perp)
+        if (spotReady) execSpot = true;
+        else return;
       } else {
-        console.log(`[smart-money] ${mode} — DCA simulé ${symbol}`);
+        // Zone verte : fallback libre — Spot préféré, puis Perp si Spot non prêt
+        if (spotReady)      execSpot = true;
+        else if (perpReady) execPerp = true;
+        else return;
       }
     }
 
-    if (perpSignal) {
+    // Multiplicateurs finaux — réallocation si un slot (0.5x) devient inutilisé (aggressive)
+    let finalPerpMult = execPerp ? decision.perpSizeMultiplier : 0;
+    let finalSpotMult = execSpot  ? decision.spotSizeMultiplier : 0;
+    // Si fallback vers route initialement non allouée → fullsize
+    if (execPerp && finalPerpMult === 0) finalPerpMult = 1.0;
+    if (execSpot  && finalSpotMult === 0) finalSpotMult = 1.0;
+    // Réallocation aggressive 0.5/0.5 : si une jambe indisponible → fullsize sur l'autre
+    if (execPerp && !execSpot && decision.spotSizeMultiplier > 0) finalPerpMult = 1.0;
+    if (!execPerp && execSpot  && decision.perpSizeMultiplier > 0) finalSpotMult = 1.0;
+
+    if (!execPerp && !execSpot) {
+      console.log(`[smart-money] ${symbol} — routing annulé (zone=${decision.zone} profile=${decision.profile})`);
+      return;
+    }
+
+    console.log(`[smart-money] 💎 ${symbol} score=${data.score}/6 zone=${decision.zone} perp=${execPerp} spot=${execSpot} — ${data.detail.join(' | ')}`);
+    cooldowns.set(symbol, now + COOLDOWN_MS);
+
+    // Nettoyer détail cache expiré (opportuniste)
+    const nowTs = Date.now();
+    for (const [id, entry] of detailCache) {
+      if (nowTs - entry.ts > DETAIL_TTL) detailCache.delete(id);
+    }
+
+    // C5 — Cache détail pour le callback Telegram (TTL 15min, shortId sans collision)
+    const shortId = buildShortId(symbol);
+    detailCache.set(shortId, {
+      symbol, score: data.score, zone: decision.zone, profile: decision.profile,
+      reason: decision.reason, fundingRate: data.fr,
+      cvdChange4h: data.cvdChange4h, basisBullish: data.basisBullish,
+      msb15m: data.msb15m, msb1h: data.msb1h, oiRegime: data.oiRegime,
+      execPerp, execSpot,
+      perpSizeMultiplier: finalPerpMult,
+      spotSizeMultiplier: finalSpotMult,
+      ts: nowTs,
+    });
+
+    // Message principal — Progressive Disclosure (spec V2)
+    const zoneEmoji = { RED: '🔴', GREY: '🟡', GREEN: '🟢', UNKNOWN: '⚪' };
+    const profileLabel = { conservative: '🌱 Conservateur', balanced: '⚖️ Équilibré', aggressive: '🔥 Agressif' };
+    const decisionLabel = execPerp && execSpot ? '⚡💰 PERP + SPOT'
+      : execPerp ? '⚡ PERP'
+      : '💰 SPOT DCA';
+
+    const mainLines = [
+      `🧠 <b>SMART MONEY</b>  ·  ${symbol}`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `🎯 Décision : <b>${decisionLabel}</b>  ·  Zone ${zoneEmoji[decision.zone] ?? ''}`,
+      `📊 Score : <b>${data.score}/6</b>  ·  Profil : ${profileLabel[decision.profile] ?? decision.profile}`,
+      `Prix <code>$${lastPrice.toFixed(4)}</code>  ·  Funding <code>${data.fundingAvailable ? (data.fr * 100).toFixed(4) : 'N/A'}%</code>`,
+      `<i>${decision.reason}</i>`,
+    ];
+    if (execPerp && execSpot) mainLines.push(`📐 Size Perp ${finalPerpMult}x · Spot ${finalSpotMult}x`);
+
+    const replyMarkup = {
+      inline_keyboard: [[{ text: '📊 Voir indicateurs', callback_data: `sm:d:${shortId}` }]],
+    };
+
+    try {
+      await sendTelegram(mainLines.join('\n'), { reply_markup: replyMarkup });
+    } catch (err) {
+      console.error(`[smart-money] Telegram ${symbol}:`, err.message);
+    }
+
+    // Garde canTradeLive — exclut testnet (Option A, 3/3 LLMs 2026-05-17)
+    const canTradeLive = mode === 'LIVE' && !isPaused() && !isEmergencyStopped() && !_isTestnet();
+
+    if (execSpot) {
+      if (canTradeLive) {
+        await startDCA(symbol, lastPrice, finalSpotMult).catch(err =>
+          console.error(`[smart-money] startDCA ${symbol}:`, err.message)
+        );
+      } else {
+        console.log(`[smart-money] ${mode} — DCA simulé ${symbol} (×${finalSpotMult})`);
+      }
+    }
+
+    if (execPerp) {
       if (canTradeLive) {
         try {
-          const order = await executeOrder({ symbol, side: 'LONG', entry: lastPrice, extra: { reduce_size: false } });
+          const order = await executeOrder({
+            symbol, side: 'LONG', entry: lastPrice,
+            extra: { reduce_size: false, sizeMultiplier: finalPerpMult },
+          });
           if (order.success) {
             const fill = order.price ?? lastPrice;
             const risk = fill * 0.02;
-            // registerTrade avant recordTrade (correction revue code #8)
             await registerTrade({ symbol, side: 'LONG', entry: fill, sl: fill - risk, tp1: fill + risk * 2, tp2: fill + risk * 3, qty: order.qty });
             recordTrade();
-            console.log(`[smart-money] PERP LONG ${symbol} fill=${fill.toFixed(4)} sl=${(fill - risk).toFixed(4)}`);
+            console.log(`[smart-money] PERP LONG ${symbol} fill=${fill.toFixed(4)} sl=${(fill - risk).toFixed(4)} size=${finalPerpMult}x`);
           } else {
             console.error(`[smart-money] ordre échoué ${symbol}: ${order.error}`);
           }
@@ -308,13 +449,20 @@ async function scanSmartMoney() {
           console.error(`[smart-money] executeOrder ${symbol}:`, err.message);
         }
       } else {
-        console.log(`[smart-money] ${mode} — ordre simulé PERP LONG ${symbol}`);
+        console.log(`[smart-money] ${mode} — ordre simulé PERP LONG ${symbol} (×${finalPerpMult})`);
       }
     }
   }));
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────
+export function getSmartMoneyDetail(shortId) {
+  const entry = detailCache.get(shortId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > DETAIL_TTL) { detailCache.delete(shortId); return null; }
+  return entry;
+}
+
 export function startSmartMoneyScanner() {
   // Singleton module-level — empêche multi-start (correction revue code #9)
   if (scannerStarted) return;
