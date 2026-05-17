@@ -350,7 +350,7 @@ export async function startAdminApi() {
       const { runAnalysis }    = await import('./scorer.js');
       const { validateSignal } = await import('./llm-validator.js');
       const result = await Promise.race([runAnalysis(symbol, []), timeout]);
-      if (result.signal === 'NO_TRADE') return { symbol, signal: 'NO_TRADE', result };
+      if (result.signal === 'NO_TRADE') return { symbol, signal: 'NO_TRADE', total: result.total ?? 0, result };
       const v = await Promise.race([validateSignal(result), timeout]);
       return { symbol, signal: result.signal, total: result.total, llm: v, result };
     } catch (err) {

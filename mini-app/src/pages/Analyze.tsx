@@ -489,7 +489,25 @@ export default function Analyze(): JSX.Element {
                   </CardContent>
                 </Card>
               ) : isBlocked ? (
-                <p className="text-xs italic text-destructive/80">LLM non consulté — signal bloqué.</p>
+                <Card className="border-orange-900/50 bg-orange-950/20">
+                  <CardContent className="pt-4 space-y-2">
+                    <div className="flex items-center gap-2 text-sm font-medium text-orange-300">
+                      <span>⛔</span>
+                      LLM non consulté
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-5">
+                      {String(
+                        detail?.gate_reason ?? detail?.veto_reason ?? "Conditions de marché défavorables — signal bloqué avant validation LLM."
+                      )}
+                    </p>
+                    <button
+                      onClick={() => setActiveTab("manual")}
+                      className="text-xs text-primary underline underline-offset-2"
+                    >
+                      Trader manuellement malgré tout →
+                    </button>
+                  </CardContent>
+                </Card>
               ) : null}
             </>
           )}
