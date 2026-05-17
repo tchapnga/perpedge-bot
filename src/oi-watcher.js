@@ -158,8 +158,8 @@ async function pollOnce() {
       await sendTelegram(msg);
       console.log(`[oi-watcher] Notification ${oiMode} envoyée — ${symbol}`);
 
-      // Chart — async, fail-open, uniquement si R:R ≥ 2.0
-      if (result._rr != null && result._rr >= 2.0) {
+      // Chart — async, fail-open : WATCH toujours (décision manuelle), TRADE si R:R ≥ 2.0
+      if (oiMode === 'WATCH' || (result._rr != null && result._rr >= 2.0)) {
         const dir    = result.direction === 'long' ? 'LONG' : 'SHORT';
         const levels = { entry: lvls.entry, sl: lvls.sl, tp: lvls.tp1, signal: dir };
         captureChart(symbol, '1h', levels)
