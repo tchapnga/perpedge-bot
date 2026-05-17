@@ -70,11 +70,26 @@ export async function placeSpotBuy({ symbol, quoteAmount, limitPrice = null }) {
     const order = await signedRequest('POST', '/api/v3/order', {
       symbol, side: 'BUY', type: 'MARKET', quoteOrderQty: String(quoteAmount),
     });
-    const fillQty   = Number(order.executedQty);
-    const fillPrice = fillQty > 0 ? Number(order.cummulativeQuoteQty) / fillQty : 0;
+    const fillQty    = Number(order.executedQty);
+    const fillQuote  = Number(order.cummulativeQuoteQty);
+    const fillPrice  = fillQty > 0 ? fillQuote / fillQty : 0;
     console.log(`[spot-executor] MARKET BUY ${symbol} ${fillQty}@${fillPrice.toFixed(4)} orderId=${order.orderId}`);
-    return { success: true, orderId: order.orderId, qty: fillQty, price: fillPrice, type: 'MARKET' };
+    return { success: true, orderId: order.orderId, qty: fillQty, price: fillPrice, quoteSpent: fillQuote, type: 'MARKET' };
   }
+}
+
+export async function getSpotOrderStatus(symbol, orderId) {
+  const raw = await signedRequest('GET', '/api/v3/order', { symbol, orderId });
+  return {
+    status:              raw.status,
+    executedQty:         raw.executedQty,
+    cummulativeQuoteQty: raw.cummulativeQuoteQty,
+    price:               raw.price,
+    origQty:             raw.origQty,
+    side:                raw.side,
+    type:                raw.type,
+    updateTime:          raw.updateTime,
+  };
 }
 
 export async function cancelSpotOrder(symbol, orderId) {
