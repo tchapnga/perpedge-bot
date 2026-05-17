@@ -166,15 +166,21 @@ export default function Analyze(): JSX.Element {
     setShowDrop(false);
   };
 
+  const QUOTE_SUFFIXES = ["USDT", "BUSD", "BTC", "ETH", "BNB"];
+
   const runAnalysis = async () => {
     if (!sym) return;
-    // Auto-complete: if typed value not in suggestions, pick the best match
     let finalSym = sym;
+    // 1. Try suggestions first (already loaded via SWR)
     if (suggestions && suggestions.length > 0 && !suggestions.includes(sym)) {
       const usdt = suggestions.find(s => s === sym + "USDT");
       finalSym = usdt ?? suggestions[0] ?? sym;
-      setSymbol(finalSym);
     }
+    // 2. Fallback: if still no known quote suffix, append USDT
+    if (finalSym === sym && !QUOTE_SUFFIXES.some(q => sym.endsWith(q))) {
+      finalSym = sym + "USDT";
+    }
+    if (finalSym !== sym) setSymbol(finalSym);
     setShowDrop(false);
     try {
       setAnalyzing(true); setErr(null); setResult(null);
@@ -183,9 +189,10 @@ export default function Analyze(): JSX.Element {
       if (e instanceof DOMException && e.name === "AbortError") {
         setErr("Timeout — l'analyse a dépassé 30 secondes.");
       } else if (e instanceof Error) {
-        // Strip technical API prefix, show only the useful part
-        const msg = e.message.replace(/^API POST \/admin\/analyze failed: \d+ — /, "");
-        try { setErr(JSON.parse(msg).error ?? msg); } catch { setErr(msg); }
+        // Strip technical API prefix — find the payload after the em dash
+        const dashIdx = e.message.indexOf(" — ");
+        const raw = dashIdx >= 0 ? e.message.slice(dashIdx + 3) : e.message;
+        try { setErr(JSON.parse(raw).error ?? raw); } catch { setErr(raw); }
       } else {
         setErr("Erreur inconnue.");
       }
