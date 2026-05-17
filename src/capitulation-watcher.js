@@ -549,6 +549,8 @@ function startGlobalLiqWs() {
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────
+export function isCapWatcherActive(symbol) { return sessions.has(symbol); }
+
 export function startCapitulationWatcher() {
   if (_started) { console.warn('[cap-watcher] déjà démarré — ignoré'); return; }
   _started = true;
