@@ -203,10 +203,32 @@ async function checkTp1InHistory(symbol, tp1AlgoId) {
 }
 
 // Option B — TP1 50% + trailing server-side après TP1. Revue complète 3 LLMs.
+// Guard "no double position" — consensus 3/3 LLMs 2026-05-18
+// fail-closed sur erreur API, filter (pas find) pour Hedge Mode
+export async function checkExistingPosition(symbol) {
+  if (trackedPositions.has(symbol)) return { active: true, source: 'BOT' };
+  try {
+    const risk = await signedRequest('GET', '/fapi/v2/positionRisk', { symbol });
+    const positions = Array.isArray(risk) ? risk.filter(p => p.symbol === symbol) : [];
+    const active = positions.find(p => Number(p.positionAmt) !== 0);
+    if (active) return { active: true, source: 'EXTERNAL', posAmt: Number(active.positionAmt) };
+  } catch (err) {
+    console.error(`[position-manager] checkExistingPosition ${symbol} — fail-closed:`, err.message);
+    return { active: true, source: 'API_ERROR' };
+  }
+  return { active: false };
+}
+
 export async function registerTrade(signal) {
   try {
     const { symbol, side, entry, sl, tp1, tp2, qty } = signal || {};
     if (!symbol || !side || entry === undefined) throw new Error('Signal invalide: symbol, side, entry requis');
+
+    // Defense-in-depth: évite d'écraser une position déjà trackée (race condition consumer)
+    if (trackedPositions.has(symbol)) {
+      console.warn(`[position-manager] registerTrade SKIP ${symbol}: déjà tracké`);
+      return null;
+    }
     const dir       = String(side).toUpperCase();
     if (dir !== 'LONG' && dir !== 'SHORT') throw new Error(`side invalide: ${side}`);
     const closeSide = dir === 'LONG' ? 'SELL' : 'BUY';

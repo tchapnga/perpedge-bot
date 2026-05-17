@@ -1,5 +1,6 @@
 import { createHmac } from 'crypto';
 import { getMode } from './bot-state.js';
+import { checkExistingPosition } from './position-manager.js';
 
 const DEFAULT_LEVERAGE           = Number(process.env.LEVERAGE) || 20;
 const DEFAULT_RECV_WINDOW        = 5000;
@@ -7,6 +8,9 @@ const DEFAULT_POSITION_SIZE_USDT = 50;
 
 // P0.1 — Ordres LIMIT GTC avec cancel auto
 const LIMIT_CANCEL_MS        = Number(process.env.LIMIT_CANCEL_MS) || 3 * 60_000;
+
+// Guard "no double position" — lock par symbole (consensus ChatGPT+DeepSeek 2026-05-18)
+const _symbolLocks = new Set();
 const LIMIT_POLL_INTERVAL_MS = 15_000;
 
 // P0.2 — Position sizing dynamique
@@ -176,6 +180,21 @@ export async function executeOrder(signal) {
       return { success: false, error: 'SHADOW mode: ordre bloqué', mode };
     }
 
+    // Guard 1 — lock par symbole (évite race condition multi-signaux simultanés)
+    if (_symbolLocks.has(symbol)) {
+      console.warn(`[order-executor] SKIP ${symbol}: ordre concurrent en cours`);
+      return { success: false, error: 'SYMBOL_LOCKED' };
+    }
+    _symbolLocks.add(symbol);
+
+    try {
+    // Guard 2 — position déjà active (bot ou externe) — fail-closed sur erreur API
+    const posCheck = await checkExistingPosition(symbol);
+    if (posCheck.active) {
+      console.warn(`[order-executor] SKIP ${symbol}: position déjà active (${posCheck.source})`);
+      return { success: false, error: 'POSITION_ALREADY_ACTIVE', reason: posCheck.source };
+    }
+
     const reduceSize = Boolean(signal.extra?.reduce_size);
     const leverage   = DEFAULT_LEVERAGE;
 
@@ -263,6 +282,9 @@ export async function executeOrder(signal) {
       return { success: true, orderId, partial: true, qty: String(executedQty), price: finalAvgPx, leverage };
     }
     return { success: false, error: 'LIMIT_TIMEOUT', orderId };
+    } finally {
+      _symbolLocks.delete(symbol);
+    }
   } catch (err) {
     console.error(`[order-executor] Error: ${err?.message ?? err}`);
     return { success: false, error: err instanceof Error ? err.message : String(err) };
