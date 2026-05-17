@@ -19,7 +19,7 @@ import { injectSignal, computeLevels } from './src/injector.js';
 import { executeOrder } from './src/order-executor.js';
 import { registerTrade, startPositionManager, getTrackedPositions, bootReconcile, startUserDataStream, stopUserDataStream } from './src/position-manager.js';
 import { startDashboard } from './src/dashboard.js';
-import { runSqueezeWatch } from './src/squeeze-watcher.js';
+import { startPreSqueezeWatcher } from './src/pre-squeeze-watcher.js';
 import { startOiWatcher } from './src/oi-watcher.js';
 import { startCrowdedUnwindWatcher } from './src/crowded-unwind-watcher.js';
 import { startCapitulationWatcher } from './src/capitulation-watcher.js';
@@ -248,15 +248,12 @@ function logSignal(result) {
 
 console.log(`PerpEdge Bot démarré — schedule: "${config.cronSchedule}"`);
 cron.schedule(config.cronSchedule, runCycle);
-cron.schedule('*/5 * * * *', async () => {
-  try { await runSqueezeWatch(); }
-  catch (err) { console.error('[squeeze] Unhandled error:', err.message); }
-});
+// pre-squeeze-watcher gère ses propres timers (IDLE 60s + WATCHING 15s)
 
 // Stagger immediate startup to avoid thundering herd on API
 runCycle();
 setTimeout(() => startOiWatcher(),             3_000);
-setTimeout(() => runSqueezeWatch(),            5_000);
+setTimeout(() => startPreSqueezeWatcher(),     5_000);
 setTimeout(() => startCrowdedUnwindWatcher(), 7_000);
 setTimeout(async () => {
   startPositionManager();
