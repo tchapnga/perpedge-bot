@@ -50,37 +50,57 @@ function fmtPrice(p) {
   return p < 1 ? p.toPrecision(4) : p.toFixed(2);
 }
 
+const TREND_DOT = { BULLISH: '🟢', BEARISH: '🔴', NEUTRAL: '⚪', SIDEWAYS: '⚪' };
+function tDot(t) { return TREND_DOT[String(t).toUpperCase()] ?? '⚪'; }
+
 // ── Génération HTML avec TradingView Lightweight Charts ───────────────────────
-function buildChartHTML(symbol, timeframe, candles, levels) {
+function buildChartHTML(symbol, timeframe, candles, levels, ctx = null) {
   const ema21      = calcEMA(candles, 21);
   const ema50      = calcEMA(candles, 50);
   const lastCandle = candles[candles.length - 1];
   const isShort    = levels?.signal?.toUpperCase().includes('SHORT');
   const dir        = levels?.signal ? (isShort ? 'SHORT' : 'LONG') : '';
 
-  // Lignes de niveaux
+  // Lignes ENTRY / TP / SL
   const levelLines = [];
   if (Number.isFinite(levels?.entry)) levelLines.push({ price: levels.entry, color: '#3b82f6', title: `ENTRY $${fmtPrice(levels.entry)}`, width: 2 });
   if (Number.isFinite(levels?.tp))    levelLines.push({ price: levels.tp,    color: '#22c55e', title: `TP    $${fmtPrice(levels.tp)}`,    width: 2 });
   if (Number.isFinite(levels?.sl))    levelLines.push({ price: levels.sl,    color: '#ef4444', title: `SL    $${fmtPrice(levels.sl)}`,    width: 2 });
 
-  // Plage de prix incluant TOUS les niveaux (pour autoscaleInfoProvider)
+  // Lignes S/R depuis le contexte (fines, tiretées)
+  const srLines = [];
+  if (Number.isFinite(ctx?.support))    srLines.push({ price: ctx.support,    color: '#f59e0b', title: `S  $${fmtPrice(ctx.support)}`,    width: 1 });
+  if (Number.isFinite(ctx?.resistance)) srLines.push({ price: ctx.resistance, color: '#a855f7', title: `R  $${fmtPrice(ctx.resistance)}`, width: 1 });
+
+  const allLines = [...levelLines, ...srLines];
+
+  // Plage de prix incluant TOUS les niveaux
   const allPrices = [
     ...candles.map(c => c.high),
     ...candles.map(c => c.low),
-    ...levelLines.map(l => l.price),
+    ...allLines.map(l => l.price),
   ];
   const minP = Math.min(...allPrices);
   const maxP = Math.max(...allPrices);
   const pad  = (maxP - minP) * 0.10;
 
-  // Bannière niveaux (header bas)
+  // Bannière niveaux ENTRY/TP/SL
   const levelsBar = levelLines.length > 0
-    ? levelLines.map(l => {
-        const c = l.color;
-        return `<span style="color:${c}">${l.title}</span>`;
-      }).join('&nbsp;&nbsp;&nbsp;')
+    ? levelLines.map(l => `<span style="color:${l.color}">${l.title}</span>`).join('&nbsp;&nbsp;&nbsp;')
     : '';
+
+  // Bande contexte : tendances + RSI + score + OI
+  const ctxParts = [];
+  if (ctx?.trend1h || ctx?.trend4h || ctx?.trend1d) {
+    const t1h = ctx.trend1h ? `1H ${tDot(ctx.trend1h)}` : '';
+    const t4h = ctx.trend4h ? `4H ${tDot(ctx.trend4h)}` : '';
+    const t1d = ctx.trend1d ? `1D ${tDot(ctx.trend1d)}` : '';
+    ctxParts.push([t1h, t4h, t1d].filter(Boolean).join('&nbsp; '));
+  }
+  if (ctx?.rsi != null)     ctxParts.push(`RSI <b>${Number(ctx.rsi).toFixed(0)}</b>`);
+  if (ctx?.score != null)   ctxParts.push(`Score <b>${ctx.score}/10</b>`);
+  if (ctx?.oiTrigger)       ctxParts.push(`OI <b>${esc(ctx.oiTrigger)}</b>`);
+  const ctxBar = ctxParts.length > 0 ? ctxParts.join('&ensp;|&ensp;') : '';
 
   return `<!DOCTYPE html>
 <html>
@@ -101,21 +121,20 @@ function buildChartHTML(symbol, timeframe, candles, levels) {
     background:${isShort ? '#3a1a1a' : '#1a3a2a'};
     color:${isShort ? '#f87171' : '#4ade80'};
   }
-  #h2 {
-    padding:5px 12px; background:#181d2b; border-bottom:1px solid #2a2e39;
-    font-size:12px; color:#9598a1;
-    display:flex; gap:24px; align-items:center;
-  }
-  #h2 b { color:#d1d4dc; }
   #h3 {
     padding:5px 12px; background:#141824; border-bottom:1px solid #2a2e39;
     font-size:12.5px; font-weight:600;
     display:flex; gap:28px;
   }
+  #ctx {
+    padding:4px 12px; background:#0f1520; border-bottom:1px solid #2a2e39;
+    font-size:12px; color:#9598a1; letter-spacing:0.02em;
+  }
+  #ctx b { color:#d1d4dc; }
   #chart-main { width:960px; height:400px; }
   #chart-vol  { width:960px; height:90px; }
   #legend {
-    position:absolute; top:${levelsBar ? 82 : 36}px; left:12px;
+    position:absolute; top:${(levelsBar ? 82 : 36) + (ctxBar ? 26 : 0)}px; left:12px;
     font-size:11px; display:flex; gap:14px; z-index:10;
   }
   #legend span { display:flex; align-items:center; gap:4px; }
@@ -125,7 +144,7 @@ function buildChartHTML(symbol, timeframe, candles, levels) {
 </head>
 <body>
 
-<!-- Ligne 1 : symbole + direction -->
+<!-- Ligne 1 : symbole + direction + OHLC -->
 <div id="h1">
   <div class="sym">
     ${esc(symbol)} · ${esc(timeframe.toUpperCase())} · Binance Perpetual
@@ -142,11 +161,15 @@ function buildChartHTML(symbol, timeframe, candles, levels) {
 <!-- Ligne 2 : niveaux ENTRY / TP / SL -->
 ${levelsBar ? `<div id="h3">${levelsBar}</div>` : ''}
 
+<!-- Ligne 3 : contexte tendances + RSI + score + OI -->
+${ctxBar ? `<div id="ctx">${ctxBar}</div>` : ''}
+
 <div id="container">
   <div id="legend">
     <span><div class="dot" style="background:#29b6f6"></div> EMA 21</span>
     <span><div class="dot" style="background:#ff9800"></div> EMA 50</span>
     ${levelLines.map(l => `<span><div class="dot" style="background:${l.color}"></div>${l.title.split(' ')[0]}</span>`).join('')}
+    ${srLines.map(l => `<span><div class="dot" style="background:${l.color}"></div>${l.title.split(' ')[0]}</span>`).join('')}
   </div>
   <div id="chart-main"></div>
   <div id="chart-vol"></div>
@@ -157,7 +180,7 @@ ${levelsBar ? `<div id="h3">${levelsBar}</div>` : ''}
 const candles    = ${safeJson(candles)};
 const ema21data  = ${safeJson(ema21)};
 const ema50data  = ${safeJson(ema50)};
-const levelLines = ${safeJson(levelLines)};
+const allLines   = ${safeJson(allLines)};
 const minP       = ${minP - pad};
 const maxP       = ${maxP + pad};
 
@@ -177,8 +200,8 @@ const candleSeries = chart.addCandlestickSeries({
 });
 candleSeries.setData(candles);
 
-// Forcer l'axe Y à inclure TOUS les niveaux (entry/SL/TP peuvent être hors des bougies)
-if (levelLines.length > 0) {
+// Forcer l'axe Y à inclure TOUS les niveaux (entry/SL/TP/S/R peuvent être hors des bougies)
+if (allLines.length > 0) {
   candleSeries.applyOptions({
     autoscaleInfoProvider: () => ({
       priceRange: { minValue: minP, maxValue: maxP },
@@ -197,8 +220,8 @@ const ema50Series = chart.addLineSeries({
 });
 ema50Series.setData(ema50data);
 
-// Tracer les lignes horizontales entry/TP/SL avec label sur l'axe des prix
-levelLines.forEach(({ price, color, title, width }) => {
+// Tracer toutes les lignes horizontales (entry/TP/SL + S/R) avec label sur l'axe des prix
+allLines.forEach(({ price, color, title, width }) => {
   candleSeries.createPriceLine({
     price, color, lineWidth: width,
     lineStyle: LightweightCharts.LineStyle.Dashed,
@@ -232,7 +255,7 @@ volChart.timeScale().fitContent();
 }
 
 // ── Export principal ──────────────────────────────────────────────────────────
-export async function captureChart(symbol, timeframe = '1h', levels = null) {
+export async function captureChart(symbol, timeframe = '1h', levels = null, ctx = null) {
   let pw;
   try {
     pw = await import('playwright');
@@ -257,7 +280,7 @@ export async function captureChart(symbol, timeframe = '1h', levels = null) {
     const candles = await fetchKlines(symbol, interval, 120);
     if (!candles.length) throw new Error('No klines data');
 
-    const html = buildChartHTML(symbol, timeframe, candles, levels);
+    const html = buildChartHTML(symbol, timeframe, candles, levels, ctx);
 
     browser = await pw.chromium.launch({
       headless: true,
@@ -265,14 +288,14 @@ export async function captureChart(symbol, timeframe = '1h', levels = null) {
       // acceptable here because HTML content is fully under our control (no user input rendered).
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     });
-    const ctx  = await browser.newContext({ viewport: { width: 960, height: 560 } });
-    const page = await ctx.newPage();
+    const bCtx = await browser.newContext({ viewport: { width: 960, height: 560 } });
+    const page = await bCtx.newPage();
 
     await page.setContent(html, { waitUntil: 'networkidle', timeout: 25000 });
     await page.waitForTimeout(2500);
 
     await page.screenshot({ path: outPath, clip: { x: 0, y: 0, width: 960, height: 560 } });
-    await ctx.close();
+    await bCtx.close();
 
     console.log(`[chart-capture] ✓ ${symbol} ${timeframe} → ${outPath}`);
     return outPath;

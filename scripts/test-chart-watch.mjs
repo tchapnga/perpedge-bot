@@ -15,8 +15,20 @@ const rr    = +((tp - entry) / (entry - sl)).toFixed(2);
 
 console.log(`[test] BTCUSDT mark=${mark.toFixed(2)}  entry=${entry.toFixed(2)}  sl=${sl}  tp=${tp}  R:R=${rr}`);
 
+// Contexte simulé pour tester la bande texte + lignes S/R
+const chartCtx = {
+  trend1h:    'BULLISH',
+  trend4h:    'NEUTRAL',
+  trend1d:    'BULLISH',
+  rsi:        54,
+  score:      7.5,
+  oiTrigger:  '+3.2% Δ5m',
+  support:    +(mark * 0.992).toFixed(2),
+  resistance: +(mark * 1.008).toFixed(2),
+};
+
 console.log('[test] Capture chart...');
-const path = await captureChart('BTCUSDT', '1h', { entry, sl, tp, signal: 'LONG' });
+const path = await captureChart('BTCUSDT', '1h', { entry, sl, tp, signal: 'LONG' }, chartCtx);
 
 if (!path) { console.error('[test] Chart capture échoué'); process.exit(1); }
 
