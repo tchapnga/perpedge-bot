@@ -91,9 +91,9 @@ export async function executeManualTrade({ symbol, side, size_usdt, leverage, sl
   const stepSize   = Number(lf.stepSize);
   const minNotional = Number(mnf?.notional ?? 0);
 
-  // ── Mark price ──────────────────────────────────────────────────────────
-  const ticker = await _public('/fapi/v1/ticker/price', { symbol: sym });
-  const markPrice = Number(ticker.price);
+  // ── Mark price (premiumIndex = true mark price used by Binance for liquidations/SL triggers) ──
+  const premium = await _public('/fapi/v1/premiumIndex', { symbol: sym });
+  const markPrice = Number(premium.markPrice);
   if (!Number.isFinite(markPrice) || markPrice <= 0) throw new Error('Mark price indisponible pour ' + sym);
 
   // ── SL/TP direction validation ─────────────────────────────────────────
@@ -123,21 +123,39 @@ export async function executeManualTrade({ symbol, side, size_usdt, leverage, sl
   const fillPrice = Number(order.avgPrice) || markPrice;
   const filledQty = Number(order.executedQty) || qty;
 
+  // ── Re-validate tp1 vs actual fill price (slippage can invalidate pre-fill check) ──
+  if (dir === 'LONG'  && tp1 <= fillPrice) throw new Error(`POST_FILL_INVALID: TP1=${tp1} <= fillPrice=${fillPrice} (slippage)`);
+  if (dir === 'SHORT' && tp1 >= fillPrice) throw new Error(`POST_FILL_INVALID: TP1=${tp1} >= fillPrice=${fillPrice} (slippage)`);
+
   // ── tp2 = 1.5× distance tp1 (trailing target) ──────────────────────────
   const tp2 = dir === 'LONG'
     ? fillPrice + (tp1 - fillPrice) * 1.5
     : fillPrice - (fillPrice - tp1) * 1.5;
 
   // ── Register with position manager (SL/TP algo orders + monitoring) ─────
-  const tracked = await registerTrade({
-    symbol: sym, side: dir,
-    entry: fillPrice,
-    sl:  _roundTick(sl,  tickSize),
-    tp1: _roundTick(tp1, tickSize),
-    tp2: _roundTick(tp2, tickSize),
-    qty: filledQty,
-    source: 'MANUAL',
-  });
+  // If registerTrade fails after a live MARKET fill → emergency close to avoid orphan position
+  let tracked = false;
+  try {
+    tracked = await registerTrade({
+      symbol: sym, side: dir,
+      entry: fillPrice,
+      sl:  _roundTick(sl,  tickSize),
+      tp1: _roundTick(tp1, tickSize),
+      tp2: _roundTick(tp2, tickSize),
+      qty: filledQty,
+      source: 'MANUAL',
+    });
+  } catch (regErr) {
+    console.error('[manual-trade] CRITICAL: registerTrade failed after fill — attempting emergency close', regErr);
+    try {
+      const closeSide = dir === 'LONG' ? 'SELL' : 'BUY';
+      await _signed('POST', '/fapi/v1/order', { symbol: sym, side: closeSide, type: 'MARKET', quantity: filledQty, reduceOnly: 'true' });
+      console.warn('[manual-trade] Emergency close executed for orphan position');
+    } catch (closeErr) {
+      console.error('[manual-trade] CRITICAL: emergency close FAILED — MANUAL INTERVENTION REQUIRED', closeErr);
+    }
+    throw new Error('TRADE_OPENED_TRACKING_FAILED_EMERGENCY_CLOSE_ATTEMPTED');
+  }
 
   const tag = _isTestnet ? '[TESTNET] ' : '';
   console.log(`[manual-trade] ${tag}${dir} ${sym} ${filledQty}@${fillPrice} SL=${sl} TP=${tp1} lev=${lev}x`);

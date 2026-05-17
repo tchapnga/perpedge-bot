@@ -26,6 +26,13 @@ export function computeLevels(result) {
     tp1 = (sr.nearest_support    != null && sr.nearest_support    < entry) ? sr.nearest_support    : entry * (1 - 0.03);
     tp2 = Math.min(tp1, entry - 2.0 * (sl - entry));
   }
+  // NaN/Infinity guard — atr=undefined or bad TA data propagates as NaN which bypasses comparison guards
+  for (const [name, val] of [['entry', entry], ['sl', sl], ['tp1', tp1], ['tp2', tp2]]) {
+    if (!Number.isFinite(val) || val <= 0) {
+      console.warn(`[injector] Niveau invalide (${name}=${val}) — skip`);
+      return null;
+    }
+  }
   return { entry, sl, tp1, tp2 };
 }
 
@@ -33,7 +40,9 @@ export async function injectSignal(result) {
   if (result.signal === 'NO_TRADE') return false;
   if (!['long', 'short'].includes(result.direction)) { console.warn('[injector] Direction invalide — skip'); return false; }
 
-  const { entry, sl, tp1, tp2 } = computeLevels(result);
+  const levels = computeLevels(result);
+  if (!levels) return false;
+  const { entry, sl, tp1, tp2 } = levels;
 
   // Validate SL direction
   if (result.direction === 'long'  && sl >= entry) { console.warn('[injector] SL invalide (long) — skip'); return false; }
@@ -63,7 +72,9 @@ export async function injectSignal(result) {
       }
     }
   } catch (err) {
-    console.warn(`[injector] Gate #9 fail-open (${result.symbol}): ${err?.message ?? err}`);
+    // Fail-closed in LIVE — a Gate#9 API failure blocks the signal rather than silently passing it
+    console.warn(`[injector] Gate #9 error — fail-closed (${result.symbol}): ${err?.message ?? err}`);
+    return false;
   }
 
   const signal = {

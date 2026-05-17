@@ -3,14 +3,17 @@ import { sendCrashAlert } from './src/crash-notifier.js';
 import { config } from './src/config.js';
 
 // P9B.5 — PM2 crash alerts: notify Telegram before process exits so PM2 can restart
-process.on('uncaughtException', (err) => {
-  console.error('[crash] uncaughtException:', err);
-  sendCrashAlert(err).finally(() => process.exit(1));
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('[crash] unhandledRejection:', reason);
-  sendCrashAlert(reason instanceof Error ? reason : new Error(String(reason))).finally(() => process.exit(1));
-});
+// Anti double-exit guard: both handlers funnel through _fatalExit
+let _exiting = false;
+async function _fatalExit(err) {
+  if (_exiting) return;
+  _exiting = true;
+  const e = err instanceof Error ? err : new Error(String(err));
+  console.error('[crash] fatal:', e);
+  try { await sendCrashAlert(e); } finally { process.exit(1); }
+}
+process.on('uncaughtException', _fatalExit);
+process.on('unhandledRejection', _fatalExit);
 import { runPhase1 } from './src/scanner.js';
 import { runAnalysis } from './src/scorer.js';
 import { buildCombinedMessage, sendTelegram, sendTelegramPhoto, fmt } from './src/notifier.js';

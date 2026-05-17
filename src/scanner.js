@@ -83,7 +83,7 @@ export async function runPhase1() {
 
   const allSymbols = new Set([...Object.keys(counts), ...oiExplosion]);
   const candidates = [...allSymbols]
-    .filter(sym => (counts[sym] >= 2 || oiExplosion.has(sym)) && !SYMBOL_BLACKLIST.has(sym))
+    .filter(sym => counts[sym] >= 2 && !SYMBOL_BLACKLIST.has(sym))
     .sort((a, b) => {
       const aOi = oiExplosion.has(a) && (counts[a] ?? 0) < 2 ? 1 : 0;
       const bOi = oiExplosion.has(b) && (counts[b] ?? 0) < 2 ? 1 : 0;
