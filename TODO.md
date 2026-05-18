@@ -536,6 +536,34 @@ Session 4 : RES.8 + RES.9 — polish (skeletons + stale indicator)
 
 ---
 
+## P-MODULE-STATS — Statistiques par module scanner
+> Priorité : après P-WEBAPP-RESILIENCE · Multi-LLM requis (architecture store centralisé vs décentralisé).
+> Objectif : savoir en temps réel si chaque module fonctionne, combien de signaux il émet, et leur qualité.
+
+### Données cibles par module
+
+| Module | Métriques |
+|---|---|
+| Scanner 15min | # signaux émis · # APPROVE/REJECT LLM · # exécutés · dernier signal (symbol, score, direction) |
+| Scalp | # signaux · # TP / SL / timeout · win rate scalp |
+| OI Watcher | # explosions · symbols les plus fréquents · dernier |
+| Squeeze Watcher | # squeezes · direction dominante (LONG/SHORT) |
+| Capitulation | # détections · # tradées vs ignorées |
+| Crowded Unwind | # unwinding détectés · dernier |
+| Smart Money | # setups DCA · # tranches exécutées |
+
+### Tâches
+
+| ID | Tâche | Fichier | Statut |
+|---|---|---|---|
+| MS.1 | Valider architecture 3 LLMs : store centralisé `src/signal-stats.js` vs compteurs in-module | — | `[ ]` |
+| MS.2 | Implémenter `src/signal-stats.js` — store en mémoire + `recordSignal(module, data)` | `src/signal-stats.js` | `[ ]` |
+| MS.3 | Instrumenter les 7 modules (appel `recordSignal` aux bons hooks) | Tous les modules | `[ ]` |
+| MS.4 | Endpoint `GET /admin/module-stats` dans `admin-api.js` | `src/admin-api.js` | `[ ]` |
+| MS.5 | Panneau UI dans mini-app — Overview ou onglet dédié | `mini-app/src/` | `[ ]` |
+
+---
+
 ## P10 — PerpEdge Terminal (SaaS Public Dashboard)
 > Spec par consensus 3 LLMs (ChatGPT + Gemini + DeepSeek) — validée utilisateur 2026-05-15.
 > **Niche** : Perpetual Futures Decision Intelligence — gap entre data brute (Coinglass) et exécution (3Commas).
