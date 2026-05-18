@@ -290,9 +290,16 @@ export async function runAnalysis(symbol, scans = []) {
     if (v6BiasLower === direction && v6Native.v6_bonus > 0) {
       total = +(total + v6Native.v6_bonus).toFixed(2);
       taResult.detail.push(`+${v6Native.v6_bonus.toFixed(2)} V6 [${(v6Native.v6_detail ?? []).join(' | ')}]`);
-    } else if (v6BiasLower !== 'neutral' && v6BiasLower !== direction && v6Native.v6_bonus >= 2.0) {
-      v6GateOppose = true;
-      v6GateDetail = `V6 opposition forte (${v6Native.v6_bias} vs ${direction} bonus=${v6Native.v6_bonus.toFixed(1)})`;
+    } else if (v6BiasLower !== 'neutral' && v6BiasLower !== direction) {
+      // Dynamic threshold: extreme funding → V6 opposition requires stronger conviction (consensus 3/3 LLMs)
+      const absFunding  = Math.abs(der?.snapshot?.funding_rate ?? 0);
+      const v6Threshold = absFunding >= 0.005 ? 4.0   // |funding| ≥ 0.50% — signal très directionnel
+                        : absFunding >= 0.002 ? 3.0   // |funding| ≥ 0.20%
+                        : 2.0;                         // default
+      if (v6Native.v6_bonus >= v6Threshold) {
+        v6GateOppose = true;
+        v6GateDetail = `V6 opposition forte (${v6Native.v6_bias} vs ${direction} bonus=${v6Native.v6_bonus.toFixed(1)} seuil=${v6Threshold})`;
+      }
     }
   }
   total = Math.min(10, Math.max(0, total));
@@ -308,14 +315,9 @@ export async function runAnalysis(symbol, scans = []) {
   let gateReason = null;
   let reduceSize = false;
 
-  // Gate 1: RV climax (P95+) → Hard Block — violent mean-reversion risk
-  if (rv?.regime === 'climax') {
-    gateBlock  = true;
-    gateReason = `RV climax (P95+) — volatilité extrême, mean-reversion violent probable`;
-  }
-
-  // Gate 2: RV extreme (P80–P95) → reduce size flag
-  if (!gateBlock && rv?.regime === 'extreme') {
+  // Gate 1+2: RV elevated (P80+) → reduce_size_50pct. Hard block via DER veto only (consensus 3/3 LLMs)
+  // P95+ alone is not a hard block — only when combined with toxic DER (handled by hasToxicDerSignal below)
+  if (rv?.regime === 'climax' || rv?.regime === 'extreme') {
     reduceSize = true;
   }
 

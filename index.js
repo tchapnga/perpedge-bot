@@ -89,7 +89,7 @@ async function runCycle() {
     if (result.rv_regime)   console.log(`  CTX: RV=${result.rv_regime} | MSB=${result.msb_direction ?? 'N/A'} | Basis=${result.basis_signal ?? 'N/A'} | BTCcorr=${result.btc_corr_macro != null ? result.btc_corr_macro.toFixed(2) : 'N/A'}`);
     if (result.gate_block)  console.log(`  [GATE] BLOQUÉ — ${result.gate_reason}`);
     if (result.veto_reason) console.log(`  [VETO] DER toxique — ${result.veto_reason}`);
-    if (result.reduce_size) console.log(`  [GATE] ⚠️ reduce_size_50pct (RV extreme)`);
+    if (result.reduce_size) console.log(`  [GATE] ⚠️ reduce_size_50pct (RV ${result.rv_regime ?? 'elevated'})`);
 
     if (result.signal !== 'NO_TRADE' && result.total >= config.minScore) {
       if (isCoolingDown(result.symbol)) {
