@@ -264,7 +264,7 @@
 | P8F.2 | Build mini-app et déployer | `npm run build` → copier `dist/` sur le serveur choisi | `[ ]` |
 | P8F.3 | Configurer BotFather | `/setmenubutton` sur le bot → URL HTTPS de la mini-app · OU laisser le bouton inline WebApp (déjà codé) | `[✓]` 2026-05-18 |
 | P8F.4 | Mettre `MINI_APP_URL=https://...` dans `.env` VPS | Le bouton "Ouvrir Cockpit" s'active automatiquement dès que la variable est définie | `[✓]` déjà présent |
-| P8F.5 | Vérifier CORS sur admin-api.js | L'admin API (:3002) doit accepter les requêtes depuis l'origine HTTPS de la mini-app (`Access-Control-Allow-Origin`) | `[ ]` |
+| P8F.5 | Vérifier CORS sur admin-api.js | L'admin API (:3002) doit accepter les requêtes depuis l'origine HTTPS de la mini-app (`Access-Control-Allow-Origin`) | `[✓]` `Access-Control-Allow-Origin: *` déjà présent ligne 280 |
 | P8F.6 | Test end-to-end dans Telegram | Ouvrir le cockpit depuis Telegram mobile · Vérifier auth initData · Vérifier chaque onglet avec données réelles | `[ ]` |
 
 #### Options d'hébergement recommandées
@@ -460,8 +460,8 @@ SSH_KEY=~/.ssh/id_rsa   # optionnel si clé par défaut
 
 | ID | Fichier | Tâche | Statut |
 |---|---|---|---|
-| NT.1 | `mini-app/src/lib/api.ts` | Ajouter `postNetwork(network: NetworkEnv)` → `POST /admin/network` | `[ ]` |
-| NT.2 | `mini-app/src/pages/Overview.tsx` | Badge TESTNET/MAINNET → clic = confirmation modale + appel `postNetwork()` + `mutateNetwork()` | `[ ]` |
+| NT.1 | `mini-app/src/lib/api.ts` | Ajouter `postNetwork(network: NetworkEnv)` → `POST /admin/network` | `[✓]` `switchNetwork()` déjà présent |
+| NT.2 | `mini-app/src/pages/Overview.tsx` | Badge TESTNET/MAINNET → clic = confirmation modale + appel `switchNetwork()` + `mutateNetwork()` | `[✓]` commit f6eeb8b |
 
 ---
 
@@ -522,10 +522,10 @@ SSH_KEY=~/.ssh/id_rsa   # optionnel si clé par défaut
 
 | ID | Feature | Fichier(s) cibles | Priorité |
 |---|---|---|---|
-| RES.1 | Timeout 10s sur toutes les requêtes `request()` via `AbortController` | `api.ts` | 🔴 CRITIQUE |
-| RES.2 | `SWRConfig` global : `errorRetryCount: 3`, `errorRetryInterval: 2000`, `keepPreviousData: true` | `main.tsx` | 🔴 CRITIQUE |
-| RES.3 | Gestion 401/403 : classe `AuthError` → bannière "Session expirée — Fermer et rouvrir le bot Telegram" | `api.ts` + `App.tsx` | 🔴 CRITIQUE |
-| RES.4 | `<ErrorBoundary>` par onglet : catch render errors → "Erreur inattendue — Recharger" + bouton retry | `App.tsx` + `ErrorBoundary.tsx` (nouveau) | 🔴 CRITIQUE |
+| RES.1 | Timeout 10s sur toutes les requêtes `request()` via `AbortController` | `api.ts` | `[✓]` commit f6eeb8b — AbortController interne + listener signal externe |
+| RES.2 | `SWRConfig` global : `errorRetryCount: 3`, `errorRetryInterval: 2000`, `keepPreviousData: true` | `main.tsx` | `[✓]` commit f6eeb8b |
+| RES.3 | Gestion 401/403 : classe `AuthError` → bannière "Session expirée — Fermer et rouvrir le bot Telegram" | `api.ts` + `App.tsx` | `[✓]` commit f6eeb8b — custom event + useEffect + banner |
+| RES.4 | `<ErrorBoundary>` par onglet : catch render errors → "Erreur inattendue — Recharger" + bouton retry | `App.tsx` + `ErrorBoundary.tsx` (nouveau) | `[✓]` commit d2ad5b5 — reset explicite via ref (DeepSeek+Gemini consensus) |
 | RES.5 | Bannière API inaccessible : 3 échecs consécutifs `/admin/status` → sticky top banner avec last-seen | `App.tsx` + contexte | 🟡 HAUTE |
 | RES.6 | Offline detection : `useOnlineStatus()` → bannière "Hors ligne" + `SWRConfig isPaused` quand offline | `hooks/useOnlineStatus.ts` (nouveau) | 🟡 HAUTE |
 | RES.7 | Error states SWR dans l'UI : chaque page affiche `<ErrorCard message retry>` si `error && !data` | Toutes les pages | 🟡 HAUTE |
