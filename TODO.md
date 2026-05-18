@@ -297,12 +297,12 @@
 
 | ID | Tâche | Détail |
 |---|---|---|
-| P9A.1 | Créer clé API Futures prod sur binance.com | Permissions requises : **Futures trading** ✅ · Lecture ✅ · Pas de retrait ❌ |
-| P9A.2 | Créer clé API Spot prod (si différente) | Permissions : **Spot trading** ✅ · Pas de retrait ❌ |
-| P9A.3 | Whitelist IP du VPS dans les deux clés | IP statique VPS obligatoire — sans whitelist, clé invalide si IP change |
-| P9A.4 | Mettre à jour `.env` prod : désactiver `BINANCE_TESTNET=false` | `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `BINANCE_SPOT_API_KEY`, `BINANCE_SPOT_API_SECRET` |
-| P9A.5 | Vérifier `POSITION_SIZE_USDT` adapté au capital réel | Testnet = 50 USDT. Prod : calibrer selon capital (ex: 1-2% du compte) |
-| P9A.6 | Vérifier `MIN_SCORE` (seuil signal) — ne pas relâcher en prod | Rester ≥ 5.0 sauf décision explicite après backtests |
+| P9A.1 | Créer clé API Futures prod sur binance.com | `[✓]` 2026-05-18 |
+| P9A.2 | Créer clé API Spot prod (si différente) | `[✓]` 2026-05-18 |
+| P9A.3 | Whitelist IP du VPS dans les deux clés | `[✓]` 2026-05-18 |
+| P9A.4 | Mettre à jour `.env` prod : `BINANCE_TESTNET=false` + clés prod | `[✓]` 2026-05-18 |
+| P9A.5 | Vérifier `POSITION_SIZE_USDT` adapté au capital réel | `[ ]` à valider lors de P9-C |
+| P9A.6 | Vérifier `MIN_SCORE` (seuil signal) — ne pas relâcher en prod | `[ ]` à valider lors de P9-C |
 
 ### P9-B — VPS & Déploiement PM2
 
@@ -778,8 +778,8 @@ Session 4 : RES.8 + RES.9 — polish (skeletons + stale indicator)
 
 ## PROCHAINE SESSION — Point de départ précis (2026-05-18)
 
-> **Dernière session** : guard no-double-position + fix Telegram 409 livrés en prod. Commits `36f8a11` + `3f394e0`. VPS propre.
-> **Prochaine priorité** : P9-A (action utilisateur) + [VPS] + P-NOTIFY.
+> **Session 2026-05-18** : P-NOTIFY + P-WEBAPP-RESILIENCE + P-NETWORK-TOGGLE + P-SCORER-RELAX tous livrés. P9-A confirmé par l'utilisateur ✅.
+> **Prochaine priorité** : P9-C (healthcheck APIs prod) → P9-D (24h shadow mode) → P9-E (go-live).
 
 ---
 
