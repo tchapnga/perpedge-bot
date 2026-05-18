@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { appendFileSync, readFileSync } from 'fs';
 import { sendCrashAlert } from './src/crash-notifier.js';
 import { config } from './src/config.js';
 
@@ -38,6 +39,7 @@ import { startAdminApi, injectAdminDeps } from './src/admin-api.js';
 import { startTelegramBot, stopTelegramBot, injectBotDeps } from './src/telegram-bot.js';
 import { startDailyReporter }              from './src/daily-reporter.js';
 import { recordCycle, recordSignal, recordTrade, isEntryPaused, isPausedAll, isEmergencyStopped, getMode } from './src/bot-state.js';
+import { registerShadowTrade, getShadowPositions, initShadowTracker } from './src/shadow-position-manager.js';
 
 // Préfixe [MAINNET]/[TESTNET] sur chaque ligne — filtrable via grep
 const _NET = process.env.BINANCE_TESTNET === 'true' ? '[TESTNET]' : '[MAINNET]';
@@ -238,7 +240,20 @@ async function runCycle() {
         console.error(`[order-executor] Error ${result.symbol}:`, err.message);
       }
     } else {
-      console.log(`[order-executor] ${mode} — ordre simulé ${result.symbol} ${result.signal}`);
+      // SHADOW — simuler l'entrée sans aucun appel Binance
+      const levels = result._levels;
+      registerShadowTrade({
+        symbol:         result.symbol,
+        side:           result.signal,
+        entry:          levels.entry,
+        sl:             levels.sl,
+        tp1:            levels.tp1,
+        tp2:            levels.tp2,
+        ta_score:       result.ta_score,
+        der_score:      result.der_score,
+        total:          result.total,
+        llm_validation: result.llm_validation,
+      });
     }
   }
 }
@@ -253,11 +268,37 @@ function isCoolingDown(symbol) {
 }
 function setCooldown(symbol) { signalCooldowns.set(symbol, Date.now()); }
 
-// Signal log pour le dashboard (max 50 entrées)
+// Signal log persisté sur disque — survit aux redémarrages (max 50 en mémoire)
+const _SIGNAL_LOG_NET = process.env.BINANCE_TESTNET === 'true' ? 'testnet' : 'mainnet';
+const SIGNAL_LOG_PATH = `./signal_log.${_SIGNAL_LOG_NET}.jsonl`;
 const signalLog = [];
+try {
+  const raw   = readFileSync(SIGNAL_LOG_PATH, 'utf8');
+  const lines = raw.trim().split('\n').filter(Boolean);
+  const loaded = lines.slice(-50).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  signalLog.push(...loaded.reverse());
+} catch { /* fichier inexistant au premier démarrage */ }
+
 function logSignal(result) {
-  signalLog.unshift({ time: new Date().toISOString(), symbol: result.symbol, signal: result.signal, total: result.total, llm_validation: result.llm_validation });
+  const entry = {
+    time:          new Date().toISOString(),
+    symbol:        result.symbol,
+    signal:        result.signal,
+    total:         result.total,
+    ta_score:      result.ta_score      ?? null,
+    der_score:     result.der_score     ?? null,
+    ta_detail:     result.ta_detail     ?? [],
+    der_detail:    result.der_detail    ?? [],
+    entry_price:   result._levels?.entry ?? null,
+    sl:            result._levels?.sl    ?? null,
+    tp1:           result._levels?.tp1   ?? null,
+    tp2:           result._levels?.tp2   ?? null,
+    rr:            result._rr            ?? null,
+    llm_validation: result.llm_validation ?? null,
+  };
+  signalLog.unshift(entry);
   if (signalLog.length > 50) signalLog.length = 50;
+  try { appendFileSync(SIGNAL_LOG_PATH, JSON.stringify(entry) + '\n', 'utf8'); } catch { /* ignore */ }
 }
 
 console.log(`PerpEdge Bot démarré — schedule: "${config.cronSchedule}"`);
@@ -274,6 +315,7 @@ setTimeout(async () => {
   await bootReconcile().catch(err => console.error('[bootReconcile] error:', err.message));
   startUserDataStream().catch(err => console.error('[userDataStream] start error:', err.message));
 },                                             9_000);
+if (process.env.DRY_RUN === 'true') setTimeout(() => initShadowTracker(), 11_000);
 setTimeout(() => startCapitulationWatcher(),                              11_000);
 setTimeout(() => startDashboard(() => getTrackedPositions(), () => signalLog), 13_000);
 startFeedbackAnalyzer();
@@ -332,9 +374,10 @@ setTimeout(() => {
 
 // Admin API + Telegram Bot — démarrage avec injection des getters partagés
 injectAdminDeps({
-  getPositions:    getTrackedPositions,
-  getSignalLog:    () => signalLog,
-  getScalpPositions: getScalpPositions,
+  getPositions:       getTrackedPositions,
+  getSignalLog:       () => signalLog,
+  getScalpPositions:  getScalpPositions,
+  getShadowPositions: getShadowPositions,
 });
 injectBotDeps({ getPositions: getTrackedPositions, getSignalLog: () => signalLog });
 startAdminApi().catch(err => console.error('[admin-api] Erreur démarrage:', err.message));

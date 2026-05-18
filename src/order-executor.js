@@ -46,8 +46,8 @@ async function fetchAvailableBalance() {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function floorToTick(price, tick) { return Math.floor(price / tick) * tick; }
-function ceilToTick(price, tick)  { return Math.ceil(price  / tick) * tick; }
+export function floorToTick(price, tick) { return Math.floor(price / tick) * tick; }
+export function ceilToTick(price, tick)  { return Math.ceil(price  / tick) * tick; }
 
 const isTestnet = String(process.env.BINANCE_TESTNET || '').toLowerCase() === 'true';
 const BASE_URL  = isTestnet
@@ -62,11 +62,11 @@ function requireBinanceCredentials() {
   if (!API_SECRET) throw new Error('Missing BINANCE_API_SECRET');
 }
 
-function toFixedSafe(value, decimals = 12) {
+export function toFixedSafe(value, decimals = 12) {
   return Number(value).toFixed(decimals).replace(/\.?0+$/, '');
 }
 
-function decimalPlaces(value) {
+export function decimalPlaces(value) {
   const str = String(value);
   if (str.includes('e-')) {
     const [, exponent] = str.split('e-');
@@ -145,7 +145,7 @@ function getSymbolFilters(exchangeInfo, symbol) {
   };
 }
 
-function calculateQuantity({ entry, stepSize, minQty, minNotional, reduceSize, positionSizeUsdt }) {
+export function calculateQuantity({ entry, stepSize, minQty, minNotional, reduceSize, positionSizeUsdt }) {
   if (!Number.isFinite(positionSizeUsdt) || positionSizeUsdt <= 0) throw new Error('Invalid positionSizeUsdt');
   if (!Number.isFinite(stepSize)         || stepSize <= 0)         throw new Error('Invalid stepSize');
   const notional = positionSizeUsdt * (reduceSize ? 0.5 : 1);

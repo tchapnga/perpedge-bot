@@ -1,6 +1,6 @@
 import useSWR from "swr";
 import { useState } from "react";
-import { Activity, BarChart3, Gauge, ShieldAlert, Sigma, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, BarChart3, Gauge, RefreshCw, ShieldAlert, Sigma, Target, TrendingDown, TrendingUp } from "lucide-react";
 import { type RiskData, type TradeProfile, type BotStatus, getRisk, getStatus, patchConfig } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
@@ -158,7 +158,7 @@ function ProfileSelector({ current, onSave }: { current: TradeProfile; onSave: (
 }
 
 export default function Risk(): JSX.Element {
-  const { data, error, isLoading } = useSWR<RiskData>("/admin/risk", getRisk, {
+  const { data, error, isLoading, mutate } = useSWR<RiskData>("/admin/risk", getRisk, {
     refreshInterval: 30_000,
   });
   const { data: status, mutate: mutateStatus } = useSWR<BotStatus>("/admin/status", getStatus, {
@@ -198,12 +198,17 @@ export default function Risk(): JSX.Element {
           ))}
         </div>
       ) : error ? (
-        /* Error state */
+        /* RES.7: error state with retry */
         <div className="relative overflow-hidden rounded-xl border border-red-900/60 bg-red-950/20 px-4 py-4 backdrop-blur-sm">
           <div className="bg-gradient-to-br from-white/[0.04] to-transparent pointer-events-none absolute inset-0 rounded-xl" />
-          <p className="relative text-sm text-red-300">
-            API indisponible — {error instanceof Error ? error.message : "Erreur réseau"}
-          </p>
+          <div className="relative flex items-center justify-between gap-2">
+            <p className="text-sm text-red-300">
+              API indisponible — {error instanceof Error ? error.message : "Erreur réseau"}
+            </p>
+            <Button size="sm" variant="secondary" onClick={() => void mutate()}>
+              <RefreshCw className="mr-1 h-3.5 w-3.5" />Réessayer
+            </Button>
+          </div>
         </div>
       ) : data ? (
         <>

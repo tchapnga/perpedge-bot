@@ -3,8 +3,9 @@ import useSWR from "swr";
 import { AlertTriangle, BarChart2, Pause, Play, RefreshCw, ShieldAlert, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  type Command, type EquityPoint, type NetworkEnv, type PositionWithType,
+  type Command, type EquityPoint, type NetworkEnv, type PositionWithType, type Signal,
   getEquity, getNetwork, getPositions, getRisk, getStatus, postCommand, switchNetwork,
 } from "@/lib/api";
 import { useMyRole } from "@/hooks/useMyRole";
@@ -234,33 +235,42 @@ function PositionCard({ pos }: { pos: PositionWithType }): JSX.Element {
   const pnl    = pos.unrealizedPnl ?? 0;
   const isLong = pos.side === "LONG";
   const pnlPos = pnl >= 0;
-  const pnlPct = Math.min(Math.abs(pnl) / 50 * 100, 100); // visualize up to ±50 USDT
+  const pnlPct = Math.min(Math.abs(pnl) / 50 * 100, 100);
+  const isShadow = pos.type === "SHADOW";
+
+  const typeStyle =
+    pos.type === "PERP"   ? "bg-blue-900/50 text-blue-300 border-blue-700/30"  :
+    pos.type === "SCALP"  ? "bg-amber-900/40 text-amber-300 border-amber-700/30" :
+                            "bg-purple-900/50 text-purple-300 border-purple-700/30";
 
   return (
     <div className={`relative overflow-hidden rounded-xl border bg-card/60 p-3 backdrop-blur-sm ${
-      isLong ? "border-emerald-900/50" : "border-red-900/50"
+      isShadow
+        ? "border-purple-900/40 opacity-80"
+        : isLong ? "border-emerald-900/50" : "border-red-900/50"
     }`}>
       {/* Left accent bar */}
-      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${isLong ? "bg-emerald-400" : "bg-red-400"}`} />
+      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${
+        isShadow ? "bg-purple-400/60" : isLong ? "bg-emerald-400" : "bg-red-400"
+      }`} />
       {/* Radial tint */}
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.05]"
-        style={{ background: `radial-gradient(ellipse at 0% 50%, ${isLong ? "#34d399" : "#f87171"} 0%, transparent 65%)` }}
+        style={{ background: `radial-gradient(ellipse at 0% 50%, ${isShadow ? "#a78bfa" : isLong ? "#34d399" : "#f87171"} 0%, transparent 65%)` }}
       />
 
       <div className="relative pl-1">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold tracking-tight">{pos.symbol}</span>
-            <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold border ${
-              pos.type === "PERP"
-                ? "bg-blue-900/50 text-blue-300 border-blue-700/30"
-                : "bg-amber-900/40 text-amber-300 border-amber-700/30"
-            }`}>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold border ${typeStyle}`}>
               {pos.type}
             </span>
+            {pos.beReached && (
+              <span className="rounded px-1.5 py-0.5 text-[10px] font-bold border border-amber-600/40 bg-amber-900/30 text-amber-300">BE</span>
+            )}
           </div>
-          <Badge variant={isLong ? "success" : "destructive"} className="text-xs font-bold">
+          <Badge variant={isLong ? "success" : "destructive"} className={`text-xs font-bold ${isShadow ? "opacity-70" : ""}`}>
             {pos.side}
           </Badge>
         </div>
@@ -284,10 +294,30 @@ function PositionCard({ pos }: { pos: PositionWithType }): JSX.Element {
           </div>
         </div>
 
+        {/* SL / TP1 / TP2 pour positions shadow */}
+        {isShadow && (pos.sl != null || pos.tp1 != null) && (
+          <div className="grid grid-cols-3 gap-x-2 text-xs mb-2.5">
+            <div>
+              <div className="mb-0.5 text-red-400/70">SL</div>
+              <div className="font-semibold tabular-nums text-red-400">{pos.sl != null ? `$${fmtPrice(pos.sl)}` : "—"}</div>
+            </div>
+            <div>
+              <div className="mb-0.5 text-emerald-400/70">TP1</div>
+              <div className="font-semibold tabular-nums text-emerald-400">{pos.tp1 != null ? `$${fmtPrice(pos.tp1)}` : "—"}</div>
+            </div>
+            <div>
+              <div className="mb-0.5 text-emerald-300/70">TP2</div>
+              <div className="font-semibold tabular-nums text-emerald-300">{pos.tp2 != null ? `$${fmtPrice(pos.tp2)}` : "—"}</div>
+            </div>
+          </div>
+        )}
+
         {/* PnL micro-bar */}
         <div className="h-[3px] w-full overflow-hidden rounded-full bg-zinc-800">
           <div
-            className={`h-full rounded-full transition-all duration-500 ${pnlPos ? "bg-emerald-400/70" : "bg-red-400/70"}`}
+            className={`h-full rounded-full transition-all duration-500 ${
+              isShadow ? "bg-purple-400/60" : pnlPos ? "bg-emerald-400/70" : "bg-red-400/70"
+            }`}
             style={{ width: `${pnlPct}%` }}
           />
         </div>
@@ -315,15 +345,132 @@ function StatCard({ label, value, helper, danger = false }: StatCardProps): JSX.
   );
 }
 
+// ── Signal detail popup ───────────────────────────────────────────────────────
+function SignalDetailDialog({ signal, onClose }: { signal: Signal | null; onClose: () => void }): JSX.Element {
+  const isLong = signal?.signal === "LONG";
+  const llm    = signal?.llm_validation;
+
+  const llmColor =
+    llm?.decision === "APPROVE"          ? "text-emerald-400" :
+    llm?.decision === "CONTRARIAN_FLIP"  ? "text-amber-400"   :
+    llm?.decision === "REJECT"           ? "text-red-400"      : "text-zinc-400";
+
+  return (
+    <Dialog open={!!signal} onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span>{signal?.symbol}</span>
+            {signal && (
+              <Badge variant={isLong ? "success" : "destructive"} className="text-xs font-bold">
+                {signal.signal}
+              </Badge>
+            )}
+            {signal && (
+              <span className="ml-auto text-sm font-normal text-muted-foreground">
+                {signal.total}/10
+              </span>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+
+        {signal && (
+          <div className="space-y-4 text-sm">
+            {/* Timestamp */}
+            <div className="text-xs text-muted-foreground">{signal.time}</div>
+
+            {/* Niveaux */}
+            {signal.entry_price != null && (
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 space-y-2">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Niveaux</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 tabular-nums text-xs">
+                  <div className="text-muted-foreground">Entrée</div>
+                  <div className="font-semibold">${fmtPrice(signal.entry_price)}</div>
+                  <div className="text-red-400">Stop Loss</div>
+                  <div className="font-semibold text-red-400">{signal.sl != null ? `$${fmtPrice(signal.sl)}` : "—"}</div>
+                  <div className="text-emerald-400">TP1</div>
+                  <div className="font-semibold text-emerald-400">{signal.tp1 != null ? `$${fmtPrice(signal.tp1)}` : "—"}</div>
+                  <div className="text-emerald-300">TP2</div>
+                  <div className="font-semibold text-emerald-300">{signal.tp2 != null ? `$${fmtPrice(signal.tp2)}` : "—"}</div>
+                  {signal.rr != null && (
+                    <>
+                      <div className="text-muted-foreground">R:R (TP1)</div>
+                      <div className="font-semibold">{signal.rr}x</div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Scores */}
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 space-y-1.5">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">Scores</div>
+              <div className="grid grid-cols-2 gap-x-4 text-xs tabular-nums">
+                <div className="text-muted-foreground">TA</div>
+                <div className="font-semibold">{signal.ta_score ?? "—"}/5</div>
+                <div className="text-muted-foreground">DER</div>
+                <div className="font-semibold">{signal.der_score ?? "—"}/5</div>
+                <div className="text-muted-foreground">Total</div>
+                <div className="font-bold">{signal.total}/10</div>
+              </div>
+            </div>
+
+            {/* TA Detail */}
+            {signal.ta_detail && signal.ta_detail.length > 0 && (
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2">TA</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {signal.ta_detail.map((d, i) => (
+                    <span key={i} className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-zinc-300">{d}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* DER Detail */}
+            {signal.der_detail && signal.der_detail.length > 0 && (
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-2">Dérivés</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {signal.der_detail.map((d, i) => (
+                    <span key={i} className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-zinc-300">{d}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* LLM Validation */}
+            {llm && (
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 space-y-1.5">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">LLM Validator</div>
+                <div className="flex items-center gap-2">
+                  <span className={`font-bold text-xs ${llmColor}`}>{llm.decision}</span>
+                  {llm.confidence != null && (
+                    <span className="text-xs text-muted-foreground">conf. {(llm.confidence * 100).toFixed(0)}%</span>
+                  )}
+                </div>
+                {llm.reasoning && (
+                  <p className="text-xs text-zinc-400 leading-relaxed">{llm.reasoning}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard(): JSX.Element {
   const [commandLoading, setCommandLoading] = useState<Command | null>(null);
   const [commandError, setCommandError]     = useState<string | null>(null);
   const [networkConfirm, setNetworkConfirm] = useState(false);
   const [networkSwitching, setNetworkSwitching] = useState(false);
+  const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
   const { isOperator } = useMyRole();
 
-  const { data: status,    mutate: mutateStatus    } = useSWR("status",              getStatus,    { refreshInterval: 5_000  });
+  const { data: status, error: statusError, mutate: mutateStatus } = useSWR("status", getStatus, { refreshInterval: 5_000 });
   const { data: positions, mutate: mutatePositions  } = useSWR("positionsWithType",  getPositions, { refreshInterval: 5_000  });
   const { data: risk                               } = useSWR("/admin/risk",         getRisk,      { refreshInterval: 30_000 });
   const { data: equity                             } = useSWR("equity",              getEquity,    { refreshInterval: 60_000 });
@@ -455,6 +602,20 @@ export default function Dashboard(): JSX.Element {
         );
       })()}
 
+      {/* ── RES.7: API error card ──────────────────────── */}
+      {statusError && !status && (
+        <div className="rounded-xl border border-red-900/60 bg-red-950/20 px-4 py-3 backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-red-300">
+              API indisponible — {statusError instanceof Error ? statusError.message : "Erreur réseau"}
+            </p>
+            <Button size="sm" variant="secondary" onClick={() => void mutateStatus()}>
+              <RefreshCw className="mr-1 h-3.5 w-3.5" />Réessayer
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* ── Alert banner ───────────────────────────────── */}
       {(isEmerg || isPaused) && (
         <div className={`rounded-xl border p-3 text-sm ${
@@ -533,32 +694,39 @@ export default function Dashboard(): JSX.Element {
         <StatCard label="Cycles"  value={String(status?.cycleCount   ?? "—")} />
       </section>
 
-      {/* ── Last signal ────────────────────────────────── */}
+      {/* ── Last signal (cliquable → popup détail) ─────── */}
       {status?.lastSignal && (
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 backdrop-blur-sm">
-          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            <Target className="h-3 w-3 text-primary" />
-            Dernier signal
-          </div>
-          <div className="flex items-center justify-between text-sm">
-            <div>
-              <span className="font-bold">{status.lastSignal.symbol}</span>
-              <span className="ml-2 text-xs text-muted-foreground">{status.lastSignal.time}</span>
+        <>
+          <button
+            className="w-full text-left rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 backdrop-blur-sm hover:bg-white/[0.06] active:scale-[0.98] transition-all duration-150 cursor-pointer"
+            onClick={() => setSelectedSignal(status.lastSignal ?? null)}
+          >
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <Target className="h-3 w-3 text-primary" />
+              Dernier signal
+              <span className="ml-auto text-[10px] text-zinc-600">Tap pour détails →</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge
-                variant={
-                  status.lastSignal.signal === "LONG"  ? "success"     :
-                  status.lastSignal.signal === "SHORT" ? "destructive" : "secondary"
-                }
-                className="text-xs font-bold"
-              >
-                {status.lastSignal.signal}
-              </Badge>
-              <span className="text-xs font-semibold text-muted-foreground">{status.lastSignal.total}/10</span>
+            <div className="flex items-center justify-between text-sm">
+              <div>
+                <span className="font-bold">{status.lastSignal.symbol}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{status.lastSignal.time}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={
+                    status.lastSignal.signal === "LONG"  ? "success"     :
+                    status.lastSignal.signal === "SHORT" ? "destructive" : "secondary"
+                  }
+                  className="text-xs font-bold"
+                >
+                  {status.lastSignal.signal}
+                </Badge>
+                <span className="text-xs font-semibold text-muted-foreground">{status.lastSignal.total}/10</span>
+              </div>
             </div>
-          </div>
-        </div>
+          </button>
+          <SignalDetailDialog signal={selectedSignal} onClose={() => setSelectedSignal(null)} />
+        </>
       )}
 
       {/* ── Risk snapshot ──────────────────────────────── */}

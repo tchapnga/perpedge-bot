@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import useSWR from "swr";
-import { BarChart2, CheckCircle2, Search, AlertTriangle, Terminal, Settings } from "lucide-react";
+import useSWR, { SWRConfig } from "swr";
+import { BarChart2, CheckCircle2, Search, AlertTriangle, Terminal, Settings, ServerOff, WifiOff } from "lucide-react";
 import Dashboard from "@/pages/Overview";
 import Analyze  from "@/pages/Analyze";
 import Risk     from "@/pages/Risk";
@@ -8,6 +8,7 @@ import Logs     from "@/pages/Logs";
 import { getSignals, getStatus, patchConfig, toggleModule, type BotMode, type TradeProfile } from "@/lib/api";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useMyRole } from "@/hooks/useMyRole";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { Badge }  from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,13 +20,54 @@ function roleBadgeClass(role: string): string {
   return "bg-zinc-600 text-white hover:bg-zinc-600";
 }
 
+// ── Thin wrapper: SWRConfig + online status ───────────────────────────────────
 export default function App(): JSX.Element {
+  const isOnline = useOnlineStatus();
+  return (
+    <SWRConfig value={{ isPaused: () => !isOnline }}>
+      <AppBody isOnline={isOnline} />
+    </SWRConfig>
+  );
+}
+
+// ── AppBody: all UI logic, banners, tabs ──────────────────────────────────────
+function AppBody({ isOnline }: { isOnline: boolean }): JSX.Element {
   const isTelegram = Boolean(window.Telegram?.WebApp?.initData);
   const { role, isLoading: roleLoading } = useMyRole();
 
   const [activeTab, setActiveTab] = useState("overview");
   const [authExpired, setAuthExpired] = useState(false);
 
+  // ── RES.5: consecutive /admin/status failure tracking ─────────────────────
+  const consecutiveFailures = useRef(0);
+  const lastSuccessAt       = useRef<number>(Date.now());
+  const [apiDown, setApiDown] = useState(false);
+  const [, setTick]           = useState(0);
+
+  useSWR("status", getStatus, {
+    refreshInterval: 5_000,
+    onSuccess: () => {
+      consecutiveFailures.current = 0;
+      lastSuccessAt.current = Date.now();
+      setApiDown(false);
+    },
+    onError: () => {
+      consecutiveFailures.current += 1;
+      if (consecutiveFailures.current >= 3) setApiDown(true);
+    },
+  });
+
+  useEffect(() => {
+    if (!apiDown) return;
+    const id = setInterval(() => setTick(t => t + 1), 1_000);
+    return () => clearInterval(id);
+  }, [apiDown]);
+
+  const lastSeenSecs = apiDown
+    ? Math.round((Date.now() - lastSuccessAt.current) / 1_000)
+    : null;
+
+  // ── Error boundary refs ───────────────────────────────────────────────────
   const ebOverview = useRef<ErrorBoundary>(null);
   const ebAnalyze  = useRef<ErrorBoundary>(null);
   const ebRisk     = useRef<ErrorBoundary>(null);
@@ -72,6 +114,27 @@ export default function App(): JSX.Element {
 
   return (
     <>
+      {/* RES.6: offline banner ─────────────────────────────────────────────── */}
+      {!isOnline && (
+        <div className="sticky top-0 z-50 border-b border-zinc-700/60 bg-zinc-950/90 px-4 py-2.5 text-sm backdrop-blur-md">
+          <div className="flex items-center gap-2 text-zinc-400">
+            <WifiOff className="h-3.5 w-3.5 shrink-0" />
+            Hors ligne — données figées
+          </div>
+        </div>
+      )}
+
+      {/* RES.5: API inaccessible banner ─────────────────────────────────────── */}
+      {isOnline && apiDown && (
+        <div className="sticky top-0 z-50 border-b border-yellow-800/60 bg-yellow-950/80 px-4 py-2.5 text-sm backdrop-blur-md">
+          <div className="flex items-center gap-2 text-yellow-200">
+            <ServerOff className="h-3.5 w-3.5 shrink-0" />
+            API inaccessible — dernière sync il y a {lastSeenSecs}s
+          </div>
+        </div>
+      )}
+
+      {/* Auth expired banner ─────────────────────────────────────────────────── */}
       {authExpired && (
         <div className="sticky top-0 z-50 border-b border-orange-800/60 bg-orange-950/80 px-4 py-2.5 text-sm backdrop-blur-md">
           <div className="flex items-center justify-between gap-3">
@@ -85,6 +148,7 @@ export default function App(): JSX.Element {
           </div>
         </div>
       )}
+
     <Tabs
       value={activeTab}
       onValueChange={(tab) => {

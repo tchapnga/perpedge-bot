@@ -21,11 +21,17 @@ export function computeLevels(result) {
     // S/R must be on correct side of entry — stale data can place it wrong
     sl  = (sr.nearest_support    != null && sr.nearest_support    < entry) ? sr.nearest_support    : entry * (1 - 0.03);
     tp1 = (sr.nearest_resistance != null && sr.nearest_resistance > entry) ? sr.nearest_resistance : entry * (1 + 0.03);
-    tp2 = Math.max(tp1, entry + 2.0 * (entry - sl));
+    const slDistL   = entry - sl;
+    const twoRL     = entry + 2.0 * slDistL;
+    // Guarantee TP2 > TP1: if resistance already clears 2R target, extend by 1 more slDist
+    tp2 = twoRL > tp1 ? twoRL : tp1 + slDistL;
   } else {
     sl  = (sr.nearest_resistance != null && sr.nearest_resistance > entry) ? sr.nearest_resistance : entry * (1 + 0.03);
     tp1 = (sr.nearest_support    != null && sr.nearest_support    < entry) ? sr.nearest_support    : entry * (1 - 0.03);
-    tp2 = Math.min(tp1, entry - 2.0 * (sl - entry));
+    const slDistS   = sl - entry;
+    const twoRS     = entry - 2.0 * slDistS;
+    // Guarantee TP2 < TP1: if support already clears 2R target, extend by 1 more slDist
+    tp2 = twoRS < tp1 ? twoRS : tp1 - slDistS;
   }
   // NaN/Infinity guard — atr=undefined or bad TA data propagates as NaN which bypasses comparison guards
   for (const [name, val] of [['entry', entry], ['sl', sl], ['tp1', tp1], ['tp2', tp2]]) {

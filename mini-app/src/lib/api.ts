@@ -67,12 +67,7 @@ export interface BotStatus {
   modules?: Record<string, boolean>;
   lastCycleAt?: string | null;
   startedAt?: string;
-  lastSignal?: {
-    time: string;
-    symbol: string;
-    signal: string;
-    total: number;
-  } | null;
+  lastSignal?: Signal | null;
 }
 
 export interface Position {
@@ -85,7 +80,12 @@ export interface Position {
 }
 
 export interface PositionWithType extends Position {
-  type: "PERP" | "SCALP";
+  type: "PERP" | "SCALP" | "SHADOW";
+  sl?: number;
+  tp1?: number;
+  tp2?: number;
+  beReached?: boolean;
+  shadow?: boolean;
 }
 
 export interface Signal {
@@ -93,7 +93,16 @@ export interface Signal {
   symbol: string;
   signal: string;
   total: number;
-  llm_validation?: { decision: string; reasoning?: string };
+  ta_score?: number | null;
+  der_score?: number | null;
+  ta_detail?: string[];
+  der_detail?: string[];
+  entry_price?: number | null;
+  sl?: number | null;
+  tp1?: number | null;
+  tp2?: number | null;
+  rr?: number | null;
+  llm_validation?: { decision: string; reasoning?: string; confidence?: number } | null;
 }
 
 export interface SuggestedTrade {
@@ -203,10 +212,11 @@ export function getStatus(): Promise<BotStatus> {
 
 // FIX: endpoint returns { positions: [], scalp: [] }
 export async function getPositions(): Promise<PositionWithType[]> {
-  const res = await request<{ positions: Position[]; scalp: Position[] }>("/admin/positions");
-  const perp  = (res.positions ?? []).map(p => ({ ...p, type: "PERP"  as const }));
-  const scalp = (res.scalp     ?? []).map(p => ({ ...p, type: "SCALP" as const }));
-  return [...perp, ...scalp];
+  const res = await request<{ positions: Position[]; scalp: Position[]; shadow?: Position[] }>("/admin/positions");
+  const perp   = (res.positions ?? []).map(p => ({ ...p, type: "PERP"   as const }));
+  const scalp  = (res.scalp     ?? []).map(p => ({ ...p, type: "SCALP"  as const }));
+  const shadow = (res.shadow    ?? []).map(p => ({ ...p, type: "SHADOW" as const, shadow: true }));
+  return [...perp, ...scalp, ...shadow];
 }
 
 // FIX: endpoint returns { signals: [] }

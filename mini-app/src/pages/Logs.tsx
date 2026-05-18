@@ -32,8 +32,9 @@ function fmtTime(ts: string): string {
 }
 
 export default function Logs(): JSX.Element {
-  const [logs,     setLogs]     = useState<LogEntrySeq[]>([]);
-  const [apiError, setApiError] = useState<string | null>(null);
+  const [logs,          setLogs]         = useState<LogEntrySeq[]>([]);
+  const [apiError,      setApiError]     = useState<string | null>(null);
+  const [retryTrigger,  setRetryTrigger] = useState(0);
   const sinceRef     = useRef<string | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const seqRef       = useRef(0);
@@ -48,6 +49,7 @@ export default function Logs(): JSX.Element {
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
+    sinceRef.current = undefined;
 
     const poll = async (): Promise<void> => {
       try {
@@ -55,7 +57,6 @@ export default function Logs(): JSX.Element {
         if (!active) return;
         if (newLogs.length > 0) {
           sinceRef.current = newLogs[newLogs.length - 1]?.ts;
-          // FIX 2: clé stable via _seq — évite le re-render complet de 300 nœuds
           setLogs(prev => {
             const tagged = newLogs.map(l => ({ ...l, _seq: seqRef.current++ }));
             return [...prev, ...tagged].slice(-300);
@@ -75,7 +76,8 @@ export default function Logs(): JSX.Element {
       active = false;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retryTrigger]);
 
   // FIX 3: auto-scroll conditionnel — scroll seulement si déjà en bas (<60px du fond)
   useEffect(() => {
@@ -117,10 +119,17 @@ export default function Logs(): JSX.Element {
         </div>
       </div>
 
-      {/* API error banner */}
+      {/* RES.7: API error banner with retry */}
       {apiError ? (
-        <div className="rounded-xl border border-red-900/60 bg-red-950/20 px-3 py-2 text-xs text-red-300">
-          {apiError}
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-red-900/60 bg-red-950/20 px-3 py-2">
+          <span className="text-xs text-red-300">{apiError}</span>
+          <button
+            type="button"
+            onClick={() => { setApiError(null); setRetryTrigger(t => t + 1); }}
+            className="shrink-0 rounded-lg border border-red-700/40 px-2 py-0.5 text-[11px] font-medium text-red-300 hover:bg-red-900/30"
+          >
+            Réessayer
+          </button>
         </div>
       ) : null}
 

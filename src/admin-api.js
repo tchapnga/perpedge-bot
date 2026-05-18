@@ -217,9 +217,10 @@ function authMiddleware(req, reply, done) {
 }
 
 // ── État interne partagé (injecté depuis index.js) ────────────────────────────
-let _getPositions = () => [];
-let _getSignalLog = () => [];
-let _getScalpPos  = () => [];
+let _getPositions      = () => [];
+let _getSignalLog      = () => [];
+let _getScalpPos       = () => [];
+let _getShadowPositions = () => [];
 
 // ── Binance data cache (TTL 5s) — shared by /admin/positions and /admin/risk ──
 let _binanceCache = { ts: 0, data: new Map(), ok: false };
@@ -238,10 +239,11 @@ async function _fetchBinanceData(positions) {
   }
 }
 
-export function injectAdminDeps({ getPositions, getSignalLog, getScalpPositions }) {
-  _getPositions = getPositions;
-  _getSignalLog = getSignalLog;
-  _getScalpPos  = getScalpPositions ?? (() => []);
+export function injectAdminDeps({ getPositions, getSignalLog, getScalpPositions, getShadowPositions }) {
+  _getPositions       = getPositions;
+  _getSignalLog       = getSignalLog;
+  _getScalpPos        = getScalpPositions  ?? (() => []);
+  _getShadowPositions = getShadowPositions ?? (() => []);
 }
 
 // ── Symbols cache (P8C.3) ─────────────────────────────────────────────────────
@@ -272,7 +274,7 @@ function _symbolScore(symbol, q) {
 }
 
 // ── Fastify ────────────────────────────────────────────────────────────────────
-export async function startAdminApi() {
+export async function buildAdminApi() {
   const app = Fastify({ logger: false });
 
   _getSymbols().catch(() => {});
@@ -304,11 +306,12 @@ export async function startAdminApi() {
 
   // ── Positions ─────────────────────────────────────────────────────────────
   app.get('/admin/positions', async () => {
-    const perpRaw  = _getPositions();
-    const scalpRaw = _getScalpPos();
-    const allRaw   = [...perpRaw, ...scalpRaw];
+    const perpRaw   = _getPositions();
+    const scalpRaw  = _getScalpPos();
+    const shadowRaw = _getShadowPositions();
+    const allRaw    = [...perpRaw, ...scalpRaw];
     const { data: binMap } = await _fetchBinanceData(allRaw);
-    const enrich   = p => {
+    const enrich = p => {
       const b = binMap.get(p.symbol);
       return {
         ...p,
@@ -317,7 +320,17 @@ export async function startAdminApi() {
         unrealizedPnl: Number.isFinite(b?.unrealizedProfit) ? b.unrealizedProfit : (p.unrealizedPnl ?? 0),
       };
     };
-    return { positions: perpRaw.map(enrich), scalp: scalpRaw.map(enrich) };
+    const enrichShadow = p => {
+      const isLong = (p.direction ?? p.side) === 'LONG';
+      const mark   = p.peakPrice ?? p.entry;
+      const pnl    = isLong ? (mark - p.entry) * (p.qty ?? 0) : (p.entry - mark) * (p.qty ?? 0);
+      return { ...p, side: p.direction ?? p.side, markPrice: mark, unrealizedPnl: +pnl.toFixed(2), shadow: true };
+    };
+    return {
+      positions: perpRaw.map(enrich),
+      scalp:     scalpRaw.map(enrich),
+      shadow:    shadowRaw.map(enrichShadow),
+    };
   });
 
   // ── Symbols autocomplete (P8C.3 — cached, sorted, anti-race) ────────────
@@ -627,6 +640,12 @@ export async function startAdminApi() {
     }
   });
 
+  await app.ready();
+  return app;
+}
+
+export async function startAdminApi() {
+  const app = await buildAdminApi();
   await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`[admin-api] Fastify démarré sur :${PORT}`);
   return app;

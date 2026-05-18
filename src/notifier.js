@@ -14,6 +14,8 @@ function trendDot(t) { return TREND_DOT[t] ?? '⚪'; }
 
 export function fmt(n) { return n < 0.01 ? n.toPrecision(4) : n.toFixed(4); }
 
+const DEFAULT_LEVERAGE = Number(process.env.LEVERAGE) || 20;
+
 function computeNotifLevels(result) {
   const close   = result.ta.tf_1h.close;
   const atr     = result.ta.tf_1h.atr_14;
@@ -66,7 +68,7 @@ export function buildMessage(result) {
     `━━━━━━━━━━━━━━━━━━━━`,
     `⭐ Score <b>${total} / 10</b>  <i>Technique ${ta_score} · Dérivés ${der_score}</i>  ${forceEmoji} <b>${force}</b>`,
     ``,
-    `<b>${entryLabel}</b>`,
+    `<b>${entryLabel}</b>  ·  <b>×${DEFAULT_LEVERAGE}</b>`,
     `🎯 TP  <b>$${fmt(tp)}</b>  <i>(+${tpPct}%)</i>`,
     `🛡 SL  <b>$${fmt(sl)}</b>  <i>(−${slPct}%)</i>`,
     ``,
@@ -155,7 +157,7 @@ export function buildCombinedMessage(results) {
 
     return [
       `${num} ${dirEmoji} <b>${dirLabel} · ${symbol}</b>  ${forceEmoji} <b>${total}/10</b>  <i>Technique ${ta_score} · Dérivés ${der_score}</i>`,
-      `   Entry <b>$${fmt(entry)}</b>  ·  TP1 $${fmt(tp)}${tp2Line}  ·  SL $${fmt(sl)}`,
+      `   Entry <b>$${fmt(entry)}</b>  ·  TP1 $${fmt(tp)}${tp2Line}  ·  SL $${fmt(sl)}  ·  <b>×${DEFAULT_LEVERAGE}</b>`,
       `   ${rrLine}`,
       ...extraLines,
       `   Funding 8h <code>${funding}</code>  ·  Intérêt ouvert 1h <code>${oi1h}</code>`,
