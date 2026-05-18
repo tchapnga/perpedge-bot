@@ -94,6 +94,21 @@ export default function App(): JSX.Element {
 // ── Config page ───────────────────────────────────────────────────────────────
 type ConfirmKind = "mode-live" | "profile-aggressive";
 
+const PROFILE_OPTIONS: { value: TradeProfile; label: string; desc: string }[] = [
+  { value: "conservative", label: "🌱 Conservateur", desc: "Spot DCA uniquement — exposition minimale" },
+  { value: "balanced",     label: "⚖️ Équilibré",    desc: "Perp ou Spot selon les indicateurs" },
+  { value: "aggressive",   label: "🔥 Agressif",     desc: "Perp + Spot en simultané (0.5× chacun)" },
+];
+
+const MODULE_META: Record<string, { dot: string; desc: string }> = {
+  scalp:         { dot: "bg-orange-400",  desc: "Entrées rapides sub-1h" },
+  capitulation:  { dot: "bg-red-400",     desc: "Capitulation du marché" },
+  smartMoney:    { dot: "bg-violet-400",  desc: "Flux smart money & CVD" },
+  oi:            { dot: "bg-sky-400",     desc: "Open Interest & funding" },
+  squeeze:       { dot: "bg-amber-400",   desc: "Détection de squeeze" },
+  crowdedUnwind: { dot: "bg-emerald-400", desc: "Débouclage de positions" },
+};
+
 function ConfigPage(): JSX.Element {
   const { data: status, isLoading: statusLoading, mutate } = useSWR("config-status", getStatus, { refreshInterval: 5000 });
   const { data: signals } = useSWR("signals-cfg", getSignals, { refreshInterval: 10000 });
@@ -116,8 +131,8 @@ function ConfigPage(): JSX.Element {
   const applyMode    = (mode: BotMode)              => withSave(async () => { await patchConfig({ mode });         await mutate(); });
   const applyProfile = (tradeProfile: TradeProfile) => withSave(async () => { await patchConfig({ tradeProfile }); await mutate(); });
 
-  const handleMode    = (mode: BotMode)    => { if (mode === "LIVE")       { setConfirm({ kind: "mode-live",           payload: mode }); return; } applyMode(mode); };
-  const handleProfile = (p: TradeProfile)  => { if (p === "aggressive")    { setConfirm({ kind: "profile-aggressive", payload: p   }); return; } applyProfile(p); };
+  const handleMode    = (mode: BotMode)    => { if (mode === "LIVE")    { setConfirm({ kind: "mode-live",           payload: mode }); return; } applyMode(mode); };
+  const handleProfile = (p: TradeProfile)  => { if (p === "aggressive") { setConfirm({ kind: "profile-aggressive", payload: p   }); return; } applyProfile(p); };
   const handleToggle  = (name: string, en: boolean) => withSave(async () => { await toggleModule(name, en); await mutate(); });
 
   const handleConfirm = () => {
@@ -126,12 +141,6 @@ function ConfigPage(): JSX.Element {
     setConfirm(null);
     if (kind === "mode-live")               applyMode(payload as BotMode);
     else if (kind === "profile-aggressive") applyProfile(payload as TradeProfile);
-  };
-
-  const PROFILE_LABELS: Record<string, string> = {
-    conservative: "🌱 Conservateur",
-    balanced:     "⚖️ Équilibré",
-    aggressive:   "🔥 Agressif",
   };
 
   return (
@@ -170,7 +179,7 @@ function ConfigPage(): JSX.Element {
         </div>
       )}
 
-      {/* Mode */}
+      {/* Mode d'exécution */}
       <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm space-y-3">
         <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Mode d'exécution
@@ -183,16 +192,23 @@ function ConfigPage(): JSX.Element {
                 key={mode}
                 onClick={() => handleMode(mode)}
                 disabled={isSaving || statusLoading}
-                className={`flex-1 rounded-xl border py-3 text-sm font-bold transition-all ${
+                className={`flex-1 rounded-xl border py-3.5 text-sm font-bold transition-all ${
                   active
                     ? mode === "LIVE"
-                      ? "border-emerald-600/60 bg-emerald-950/30 text-emerald-300"
-                      : "border-white/[0.15] bg-white/[0.07] text-foreground"
-                    : "border-white/[0.06] bg-transparent text-muted-foreground hover:border-white/[0.12] hover:text-foreground"
+                      ? "border-red-600/60 bg-red-950/30 text-red-300"
+                      : "border-sky-600/50 bg-sky-950/20 text-sky-300"
+                    : mode === "LIVE"
+                      ? "border-white/[0.06] bg-transparent text-muted-foreground hover:border-red-900/40 hover:bg-red-950/10 hover:text-red-300/70"
+                      : "border-white/[0.06] bg-transparent text-muted-foreground hover:border-white/[0.12] hover:text-foreground"
                 }`}
               >
-                <div>{mode}</div>
-                <div className="mt-0.5 text-[10px] font-normal opacity-70">
+                <div className="flex items-center justify-center gap-1.5">
+                  {mode === "LIVE" && (
+                    <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-red-400" : "bg-muted-foreground/40"}`} />
+                  )}
+                  {mode}
+                </div>
+                <div className="mt-0.5 text-[10px] font-normal opacity-60">
                   {mode === "LIVE" ? "Ordres réels Binance" : "Signaux sans exécution"}
                 </div>
               </button>
@@ -201,30 +217,31 @@ function ConfigPage(): JSX.Element {
         </div>
       </div>
 
-      {/* Trade profile */}
+      {/* Profil de trade */}
       <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm space-y-2">
-        <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">
           Profil de trade
         </div>
-        {(["conservative", "balanced", "aggressive"] as const).map((p) => {
+        {PROFILE_OPTIONS.map(({ value: p, label, desc }) => {
           const active = status?.tradeProfile === p;
           return (
             <button
               key={p}
               onClick={() => handleProfile(p)}
               disabled={isSaving || statusLoading}
-              className={`w-full rounded-xl border px-4 py-2.5 text-left text-sm font-medium transition-all ${
+              className={`w-full rounded-xl border px-4 py-3 text-left transition-all ${
                 active
                   ? p === "aggressive"
-                    ? "border-orange-600/60 bg-orange-950/30 text-orange-300"
-                    : "border-emerald-600/60 bg-emerald-950/20 text-emerald-300"
+                    ? "border-orange-600/60 bg-orange-950/25 text-orange-300"
+                    : "border-emerald-600/50 bg-emerald-950/20 text-emerald-300"
                   : "border-white/[0.06] bg-transparent text-muted-foreground hover:border-white/[0.12] hover:text-foreground"
               }`}
             >
               <div className="flex items-center justify-between">
-                <span>{PROFILE_LABELS[p]}</span>
-                {active && <CheckCircle2 className="h-3.5 w-3.5 opacity-80" />}
+                <span className="text-sm font-semibold">{label}</span>
+                {active && <CheckCircle2 className="h-4 w-4 shrink-0 opacity-80" />}
               </div>
+              <div className={`mt-0.5 text-xs ${active ? "opacity-70" : "opacity-50"}`}>{desc}</div>
             </button>
           );
         })}
@@ -236,36 +253,49 @@ function ConfigPage(): JSX.Element {
           Modules
         </div>
         {statusLoading ? (
-          <div className="text-sm text-muted-foreground">Chargement…</div>
+          <div className="space-y-2">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="animate-pulse h-14 rounded-xl border border-white/[0.04] bg-white/[0.02]" />
+            ))}
+          </div>
         ) : Object.keys(modules).length > 0 ? (
-          Object.entries(modules).map(([name, enabled]) => (
-            <div key={name} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
-              <div>
-                <div className="text-sm font-medium">{name}</div>
-                <div className={`text-xs ${enabled ? "text-emerald-400" : "text-muted-foreground"}`}>
-                  {enabled ? "Actif" : "Inactif"}
+          Object.entries(modules).map(([name, enabled]) => {
+            const meta = MODULE_META[name];
+            return (
+              <div key={name} className={`flex items-center gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                enabled
+                  ? "border-white/[0.08] bg-white/[0.03]"
+                  : "border-white/[0.04] bg-transparent opacity-60"
+              }`}>
+                {/* Color dot */}
+                <span className={`h-2 w-2 shrink-0 rounded-full ${meta?.dot ?? "bg-zinc-500"} ${enabled ? "" : "opacity-40"}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold capitalize">{name}</div>
+                  {meta?.desc && (
+                    <div className="text-[11px] text-muted-foreground/70 truncate">{meta.desc}</div>
+                  )}
                 </div>
+                {/* Toggle switch */}
+                <button
+                  onClick={() => handleToggle(name, !enabled)}
+                  disabled={isSaving}
+                  aria-checked={enabled}
+                  role="switch"
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus:outline-none ${
+                    enabled ? (meta?.dot.replace("bg-", "bg-").replace("-400", "-600") ?? "bg-emerald-600") : "bg-zinc-700"
+                  }`}
+                >
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${enabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                </button>
               </div>
-              {/* Toggle switch */}
-              <button
-                onClick={() => handleToggle(name, !enabled)}
-                disabled={isSaving}
-                aria-checked={enabled}
-                role="switch"
-                className={`relative h-6 w-11 rounded-full transition-colors focus:outline-none ${enabled ? "bg-emerald-600" : "bg-zinc-700"}`}
-              >
-                <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${enabled ? "translate-x-5" : "translate-x-0.5"}`}
-                />
-              </button>
-            </div>
-          ))
+            );
+          })
         ) : (
           <div className="text-sm text-muted-foreground">Aucun module exposé par l'API.</div>
         )}
       </div>
 
-      {/* Recent signals */}
+      {/* Derniers signaux */}
       <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm">
         <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-3">
           Derniers signaux
