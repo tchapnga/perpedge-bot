@@ -121,6 +121,17 @@ export interface CommandResult {
 
 type HttpMethod = "GET" | "POST" | "PATCH";
 
+export class AuthError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+  constructor(status: number, statusText: string, method: HttpMethod, path: string) {
+    super(`API ${method} ${path} auth failed: ${status} ${statusText}`);
+    this.name = "AuthError";
+    this.status = status;
+    this.statusText = statusText;
+  }
+}
+
 export function getAuthHeaders(): Record<string, string> {
   const initData = window.Telegram?.WebApp?.initData;
   if (initData && initData.trim().length > 0) {
@@ -132,28 +143,58 @@ export function getAuthHeaders(): Record<string, string> {
   return {};
 }
 
+const REQUEST_TIMEOUT_MS = 10_000;
+
 async function request<T>(
   path: string,
   options: { method?: HttpMethod; body?: unknown; signal?: AbortSignal } = {}
 ): Promise<T> {
-  const { method = "GET", body, signal } = options;
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method,
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      ...getAuthHeaders(),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
-    throw new Error(
-      `API ${method} ${path} failed: ${response.status} ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}`
-    );
+  const { method = "GET", body, signal: externalSignal } = options;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new DOMException("Request timeout after 10s", "TimeoutError"));
+  }, REQUEST_TIMEOUT_MS);
+
+  let onExternalAbort: (() => void) | undefined;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(timeoutId);
+      throw externalSignal.reason ?? new DOMException("Aborted", "AbortError");
+    }
+    onExternalAbort = () => { controller.abort(externalSignal.reason); };
+    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
   }
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => "");
+      if (response.status === 401 || response.status === 403) {
+        const e = new AuthError(response.status, response.statusText, method, path);
+        window.dispatchEvent(new CustomEvent("auth-error", { detail: e }));
+        throw e;
+      }
+      throw new Error(
+        `API ${method} ${path} failed: ${response.status} ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}`
+      );
+    }
+    if (response.status === 204) return undefined as T;
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timeoutId);
+    if (onExternalAbort && externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
+  }
 }
 
 export function getStatus(): Promise<BotStatus> {

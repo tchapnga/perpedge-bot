@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { SWRConfig } from "swr";
 import App from "./App";
 import "./index.css";
 
@@ -9,6 +10,8 @@ if (!rootElement) {
 }
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    <App />
+    <SWRConfig value={{ errorRetryCount: 3, errorRetryInterval: 2000, keepPreviousData: true }}>
+      <App />
+    </SWRConfig>
   </React.StrictMode>
 );

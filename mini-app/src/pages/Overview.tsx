@@ -4,8 +4,8 @@ import { AlertTriangle, BarChart2, Pause, Play, RefreshCw, ShieldAlert, Target }
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  type Command, type EquityPoint, type PositionWithType,
-  getEquity, getNetwork, getPositions, getRisk, getStatus, postCommand,
+  type Command, type EquityPoint, type NetworkEnv, type PositionWithType,
+  getEquity, getNetwork, getPositions, getRisk, getStatus, postCommand, switchNetwork,
 } from "@/lib/api";
 import { useMyRole } from "@/hooks/useMyRole";
 
@@ -319,6 +319,8 @@ function StatCard({ label, value, helper, danger = false }: StatCardProps): JSX.
 export default function Dashboard(): JSX.Element {
   const [commandLoading, setCommandLoading] = useState<Command | null>(null);
   const [commandError, setCommandError]     = useState<string | null>(null);
+  const [networkConfirm, setNetworkConfirm] = useState(false);
+  const [networkSwitching, setNetworkSwitching] = useState(false);
   const { isOperator } = useMyRole();
 
   const { data: status,    mutate: mutateStatus    } = useSWR("status",              getStatus,    { refreshInterval: 5_000  });
@@ -393,11 +395,11 @@ export default function Dashboard(): JSX.Element {
                 network.network === "TESTNET"
                   ? "border-orange-500/60 bg-orange-950/40 text-orange-300"
                   : "border-emerald-700/60 bg-emerald-950/30 text-emerald-400"
-              } ${networkLoading ? "opacity-50" : "hover:opacity-75"}`}
-              onClick={() => mutateNetwork()}
-              title="Cliquer pour rafraîchir"
+              } ${(networkLoading || networkSwitching) ? "opacity-50 cursor-not-allowed" : "hover:opacity-75 cursor-pointer"}`}
+              onClick={() => { if (!networkSwitching && !networkLoading) setNetworkConfirm(true); }}
+              title="Cliquer pour changer le réseau"
             >
-              {networkLoading ? <RefreshCw className="h-2.5 w-2.5 animate-spin" /> : null}
+              {(networkLoading || networkSwitching) ? <RefreshCw className="h-2.5 w-2.5 animate-spin" /> : null}
               {network.network === "TESTNET" ? "TESTNET" : "MAINNET · REAL FUNDS"}
             </button>
           ) : (
@@ -412,6 +414,46 @@ export default function Dashboard(): JSX.Element {
           )}
         </div>
       </header>
+
+      {/* ── Network switch confirmation ─────────────────── */}
+      {networkConfirm && network && (() => {
+        const target: NetworkEnv = network.network === "TESTNET" ? "MAINNET" : "TESTNET";
+        const isToLive = target === "MAINNET";
+        return (
+          <div className="rounded-xl border border-orange-500/60 bg-orange-950/30 px-4 py-4 space-y-3">
+            <div className="text-sm font-semibold text-orange-200">
+              {isToLive ? "⚠️ Passer en MAINNET — FONDS RÉELS" : "↩️ Repasser en TESTNET"}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {isToLive
+                ? <span>Le bot basculera sur <b>Binance MAINNET</b>. Les ordres suivants utiliseront du <b>capital réel</b>. Le process sera redémarré.</span>
+                : <span>Le bot repassera en <b>Binance Testnet</b>. Aucun capital réel ne sera utilisé.</span>
+              }
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setNetworkConfirm(false)}>Annuler</Button>
+              <Button
+                size="sm"
+                className={isToLive ? "bg-orange-600 hover:bg-orange-700 text-white" : ""}
+                onClick={async () => {
+                  setNetworkConfirm(false);
+                  setNetworkSwitching(true);
+                  try {
+                    await switchNetwork(target);
+                    await mutateNetwork();
+                  } catch (err) {
+                    setCommandError(err instanceof Error ? err.message : "Erreur changement réseau");
+                  } finally {
+                    setNetworkSwitching(false);
+                  }
+                }}
+              >
+                {isToLive ? "Confirmer MAINNET" : "Confirmer TESTNET"}
+              </Button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Alert banner ───────────────────────────────── */}
       {(isEmerg || isPaused) && (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import useSWR from "swr";
 import { BarChart2, CheckCircle2, Search, AlertTriangle, Terminal, Settings } from "lucide-react";
 import Dashboard from "@/pages/Overview";
@@ -6,6 +6,7 @@ import Analyze  from "@/pages/Analyze";
 import Risk     from "@/pages/Risk";
 import Logs     from "@/pages/Logs";
 import { getSignals, getStatus, patchConfig, toggleModule, type BotMode, type TradeProfile } from "@/lib/api";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useMyRole } from "@/hooks/useMyRole";
 import { Badge }  from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,19 @@ export default function App(): JSX.Element {
   const isTelegram = Boolean(window.Telegram?.WebApp?.initData);
   const { role, isLoading: roleLoading } = useMyRole();
 
+  const [activeTab, setActiveTab] = useState("overview");
+  const [authExpired, setAuthExpired] = useState(false);
+
+  const ebOverview = useRef<ErrorBoundary>(null);
+  const ebAnalyze  = useRef<ErrorBoundary>(null);
+  const ebRisk     = useRef<ErrorBoundary>(null);
+  const ebLogs     = useRef<ErrorBoundary>(null);
+  const ebConfig   = useRef<ErrorBoundary>(null);
+
+  const ebRefs: Record<string, RefObject<ErrorBoundary>> = {
+    overview: ebOverview, analyze: ebAnalyze, risk: ebRisk, logs: ebLogs, config: ebConfig,
+  };
+
   useEffect(() => {
     const tg = window.Telegram?.WebApp;
     tg?.ready?.();
@@ -32,6 +46,12 @@ export default function App(): JSX.Element {
       tg?.setBackgroundColor?.("#0d1117");
     } catch {}
     document.documentElement.setAttribute("data-theme", tg?.colorScheme ?? "dark");
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setAuthExpired(true);
+    window.addEventListener("auth-error", handler);
+    return () => window.removeEventListener("auth-error", handler);
   }, []);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,14 +71,35 @@ export default function App(): JSX.Element {
   }
 
   return (
-    <Tabs defaultValue="overview" className="min-h-dvh">
+    <>
+      {authExpired && (
+        <div className="sticky top-0 z-50 border-b border-orange-800/60 bg-orange-950/80 px-4 py-2.5 text-sm backdrop-blur-md">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-orange-200">Session expirée — relancez depuis Telegram.</span>
+            <button
+              onClick={() => setAuthExpired(false)}
+              className="rounded-lg border border-orange-700/40 px-2 py-0.5 text-xs text-orange-300 hover:bg-orange-900/40"
+            >
+              Fermer
+            </button>
+          </div>
+        </div>
+      )}
+    <Tabs
+      value={activeTab}
+      onValueChange={(tab) => {
+        ebRefs[tab]?.current?.resetErrorBoundary();
+        setActiveTab(tab);
+      }}
+      className="min-h-dvh"
+    >
       {/* Tab content — pb-20 to avoid overlap with bottom nav */}
       <div className="pb-20">
-        <TabsContent value="overview" className="mt-0"><Dashboard /></TabsContent>
-        <TabsContent value="analyze"  className="mt-0"><Analyze /></TabsContent>
-        <TabsContent value="risk"     className="mt-0"><Risk /></TabsContent>
-        <TabsContent value="logs"     className="mt-0"><Logs /></TabsContent>
-        <TabsContent value="config"   className="mt-0"><ConfigPage /></TabsContent>
+        <TabsContent value="overview" className="mt-0"><ErrorBoundary ref={ebOverview}><Dashboard /></ErrorBoundary></TabsContent>
+        <TabsContent value="analyze"  className="mt-0"><ErrorBoundary ref={ebAnalyze}><Analyze /></ErrorBoundary></TabsContent>
+        <TabsContent value="risk"     className="mt-0"><ErrorBoundary ref={ebRisk}><Risk /></ErrorBoundary></TabsContent>
+        <TabsContent value="logs"     className="mt-0"><ErrorBoundary ref={ebLogs}><Logs /></ErrorBoundary></TabsContent>
+        <TabsContent value="config"   className="mt-0"><ErrorBoundary ref={ebConfig}><ConfigPage /></ErrorBoundary></TabsContent>
       </div>
 
       {/* Bottom navigation — top border indicator on active */}
@@ -88,6 +129,7 @@ export default function App(): JSX.Element {
         )}
       </TabsList>
     </Tabs>
+    </>
   );
 }
 
