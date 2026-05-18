@@ -454,6 +454,17 @@ SSH_KEY=~/.ssh/id_rsa   # optionnel si clé par défaut
 
 ---
 
+## 🔴 P-NETWORK-TOGGLE — Toggle Testnet ↔ Mainnet dans la mini-app
+> Priorité haute · Backend 100% prêt (`GET/POST /admin/network` + pm2 restart auto) · Frontend incomplet.
+> **Pas de LLM requis** — fix simple et ciblé.
+
+| ID | Fichier | Tâche | Statut |
+|---|---|---|---|
+| NT.1 | `mini-app/src/lib/api.ts` | Ajouter `postNetwork(network: NetworkEnv)` → `POST /admin/network` | `[ ]` |
+| NT.2 | `mini-app/src/pages/Overview.tsx` | Badge TESTNET/MAINNET → clic = confirmation modale + appel `postNetwork()` + `mutateNetwork()` | `[ ]` |
+
+---
+
 ## P-WEBAPP-RESILIENCE — Robustesse et résilience de la Mini-App React
 > Spec établie 2026-05-18 après audit complet du code (`api.ts`, `App.tsx`, `Overview.tsx`).
 > **Multi-LLM requis avant implémentation.** Questions précises définies ci-dessous.
