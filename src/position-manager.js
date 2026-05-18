@@ -512,15 +512,18 @@ async function pollPositions() {
         }
         // P0t.8 — close lifecycle notification (fail-open)
         if (Number.isFinite(rawPnl)) {
-          const _reasonLabel = { SL: 'Stop Loss', BREAKEVEN: 'Breakeven', TRAIL: 'Trailing Stop' }[exitReason] ?? exitReason;
-          const _pnlLabel    = rawPnl >= 0 ? `+${rawPnl.toFixed(2)}` : rawPnl.toFixed(2);
-          const _gainPct     = notional > 0 ? rawPnl / notional * 100 : null;
-          const _gainStr     = _gainPct != null ? ` <i>(${_gainPct >= 0 ? '+' : ''}${_gainPct.toFixed(2)}%)</i>` : '';
+          const _titleByReason = { SL: '🔴 Stop Loss', TRAIL: '✅ TP2 / Trailing', BREAKEVEN: '🛡️ Breakeven' };
+          const _title    = _titleByReason[exitReason] ?? '🏁 Clôture';
+          const _pnlLabel = rawPnl >= 0 ? `+${rawPnl.toFixed(2)}` : rawPnl.toFixed(2);
+          const _gainPct  = notional > 0 ? rawPnl / notional * 100 : null;
+          const _gainStr  = _gainPct != null ? ` <i>(${_gainPct >= 0 ? '+' : ''}${_gainPct.toFixed(2)}%)</i>` : '';
+          const _pnlLine  = exitReason === 'BREAKEVEN'
+            ? `🔄 Clôture au prix d'entrée <i>(frais déduits)</i>`
+            : `💵 PnL réalisé : <b>${_pnlLabel} USDT</b>${_gainStr}`;
           sendTelegram([
-            `${exitReason === 'SL' ? '🔴' : '🏁'} <b>Position ${exitReason === 'SL' ? 'stoppée' : 'fermée'}</b> — <code>${symbol}</code>`,
+            `${_title} — <code>${symbol}</code>`,
             `📈 <b>${pos.direction}</b> | Entrée <code>${fmt(pos.entry)}</code> → Sortie <code>${fmt(exitPrice)}</code>`,
-            `🎯 Sortie par : <b>${_reasonLabel}</b>`,
-            `💵 PnL réalisé : <b>${_pnlLabel} USDT</b>${_gainStr}`,
+            _pnlLine,
           ].join('\n')).catch(err => console.error(`[Telegram] close notify ${symbol}:`, err.message));
         }
         trackedPositions.delete(symbol);
@@ -558,10 +561,14 @@ async function pollPositions() {
         savePositions(trackedPositions);
         console.log(`[position-manager] TP1_HIT ${symbol} — BE=${bePrice} trailing=${pos.trailingOrderId} remaining=${pos.qty_remaining}`);
         // P0t.8 — TP1 lifecycle notification (fail-open, after SL moved)
+        const _tp1Pnl = pos.direction === 'LONG'
+          ? (pos.tp1 - pos.entry) * pos.qty_half
+          : (pos.entry - pos.tp1) * pos.qty_half;
         sendTelegram([
           `🎯 <b>TP1 atteint</b> — <code>${symbol}</code>`,
           `📈 <b>${pos.direction}</b> | Entrée <code>${fmt(pos.entry)}</code>`,
           `💰 TP1 touché : <code>${fmt(pos.tp1)}</code>`,
+          `💵 PnL partiel : <b>${_tp1Pnl >= 0 ? '+' : ''}${_tp1Pnl.toFixed(2)} USDT</b> <i>(brut)</i>`,
           `🛡️ Stop sécurisé au breakeven : <code>${fmt(bePrice)}</code>`,
           `🔁 Trailing actif sur le reste de la position`,
         ].join('\n')).catch(err => console.error(`[Telegram] TP1 notify ${symbol}:`, err.message));
@@ -620,7 +627,7 @@ async function pollPositions() {
             // P0t.8 — early exit lifecycle notification (fail-open)
             if (Number.isFinite(rawPnl)) {
               const _isPanic  = earlyCheck.reason === 'EARLY_EXIT_PANIC';
-              const _title    = _isPanic ? '🚨 Sortie panique' : '⚠️ Early Exit';
+              const _title    = _isPanic ? '🚨 Sortie panique' : '⚡ Early Exit';
               const _pnlLabel = rawPnl >= 0 ? `+${rawPnl.toFixed(2)}` : rawPnl.toFixed(2);
               const _gainPct  = notional > 0 ? rawPnl / notional * 100 : null;
               const _gainStr  = _gainPct != null ? ` <i>(${_gainPct >= 0 ? '+' : ''}${_gainPct.toFixed(2)}%)</i>` : '';
@@ -629,6 +636,7 @@ async function pollPositions() {
                 `${_title} — <code>${symbol}</code>`,
                 `📈 <b>${pos.direction}</b> | Entrée <code>${fmt(pos.entry)}</code> → Sortie <code>${fmt(markPrice)}</code>`,
                 `💵 PnL réalisé : <b>${_pnlLabel} USDT</b>${_gainStr}`,
+                `📊 Score : <b>${earlyCheck.score}/${EARLY_EXIT_THRESHOLD} pts</b>`,
                 `📡 Signaux : <i>${_signals}</i>`,
               ].join('\n')).catch(err => console.error(`[Telegram] early exit notify ${symbol}:`, err.message));
             }
