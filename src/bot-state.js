@@ -10,7 +10,7 @@ const CB_MAX_CONSEC_LOSSES = Number.isFinite(Number(process.env.CIRCUIT_BREAKER_
 
 const state = {
   pauseLevel:       'none',        // 'none' | 'entries' | 'all'
-  mode:             'LIVE',        // 'LIVE' | 'SHADOW'
+  mode:             process.env.DRY_RUN === 'true' ? 'SHADOW' : 'LIVE', // 'LIVE' | 'SHADOW'
   emergencyStopped: false,
   tradeProfile:     'balanced',    // 'conservative' | 'balanced' | 'aggressive'
 
