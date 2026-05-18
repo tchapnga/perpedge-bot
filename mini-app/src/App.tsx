@@ -100,13 +100,13 @@ const PROFILE_OPTIONS: { value: TradeProfile; label: string; desc: string }[] = 
   { value: "aggressive",   label: "🔥 Agressif",     desc: "Perp + Spot en simultané (0.5× chacun)" },
 ];
 
-const MODULE_META: Record<string, { dot: string; desc: string }> = {
-  scalp:         { dot: "bg-orange-400",  desc: "Entrées rapides sub-1h" },
-  capitulation:  { dot: "bg-red-400",     desc: "Capitulation du marché" },
-  smartMoney:    { dot: "bg-violet-400",  desc: "Flux smart money & CVD" },
-  oi:            { dot: "bg-sky-400",     desc: "Open Interest & funding" },
-  squeeze:       { dot: "bg-amber-400",   desc: "Détection de squeeze" },
-  crowdedUnwind: { dot: "bg-emerald-400", desc: "Débouclage de positions" },
+const MODULE_META: Record<string, { dot: string; track: string; desc: string }> = {
+  scalp:         { dot: "bg-orange-400",  track: "bg-orange-600",  desc: "Entrées rapides sub-1h" },
+  capitulation:  { dot: "bg-red-400",     track: "bg-red-600",     desc: "Capitulation du marché" },
+  smartMoney:    { dot: "bg-violet-400",  track: "bg-violet-600",  desc: "Flux smart money & CVD" },
+  oi:            { dot: "bg-sky-400",     track: "bg-sky-600",     desc: "Open Interest & funding" },
+  squeeze:       { dot: "bg-amber-400",   track: "bg-amber-600",   desc: "Détection de squeeze" },
+  crowdedUnwind: { dot: "bg-emerald-400", track: "bg-emerald-600", desc: "Débouclage de positions" },
 };
 
 function ConfigPage(): JSX.Element {
@@ -282,7 +282,7 @@ function ConfigPage(): JSX.Element {
                   aria-checked={enabled}
                   role="switch"
                   className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus:outline-none ${
-                    enabled ? (meta?.dot.replace("bg-", "bg-").replace("-400", "-600") ?? "bg-emerald-600") : "bg-zinc-700"
+                    enabled ? (meta?.track ?? "bg-emerald-600") : "bg-zinc-700"
                   }`}
                 >
                   <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${enabled ? "translate-x-5" : "translate-x-0.5"}`} />
