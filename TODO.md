@@ -454,6 +454,77 @@ SSH_KEY=~/.ssh/id_rsa   # optionnel si clé par défaut
 
 ---
 
+## P-WEBAPP-RESILIENCE — Robustesse et résilience de la Mini-App React
+> Spec établie 2026-05-18 après audit complet du code (`api.ts`, `App.tsx`, `Overview.tsx`).
+> **Multi-LLM requis avant implémentation.** Questions précises définies ci-dessous.
+> Objectif : la mini-app reste utilisable et informative même quand l'API bot est lente, hors ligne ou retourne des erreurs.
+
+### Problèmes identifiés (code audit)
+
+| # | Problème | Localisation | Impact réel |
+|---|---|---|---|
+| 1 | `request()` sans timeout — API freeze = requête en attente infinie | `api.ts:135` | UI bloquée, spinner infini |
+| 2 | SWR `error` ignoré partout — l'UI affiche "—" en silence | Tous les useSWR | Utilisateur croit que le bot est down sans savoir pourquoi |
+| 3 | Pas de React Error Boundary | `App.tsx` | Erreur de rendu dans un onglet → écran blanc complet |
+| 4 | Pas de SWRConfig global | `App.tsx` / `main.tsx` | Retries SWR infinis par défaut sur erreur persistante |
+| 5 | 401/403 non distingués — si initData Telegram expire | `api.ts:149` | Boucle retry silencieuse, log d'erreurs côté bot |
+| 6 | Pas de détection offline (`navigator.onLine`) | — | Sur mobile Telegram : requêtes silencieusement perdues |
+| 7 | Pas de skeleton sur chargement initial | `Overview.tsx`, `Risk.tsx` | Flash de "—" partout, layout shift |
+
+### Spec détaillée
+
+| ID | Feature | Fichier(s) cibles | Priorité |
+|---|---|---|---|
+| RES.1 | Timeout 10s sur toutes les requêtes `request()` via `AbortController` | `api.ts` | 🔴 CRITIQUE |
+| RES.2 | `SWRConfig` global : `errorRetryCount: 3`, `errorRetryInterval: 2000`, `keepPreviousData: true` | `main.tsx` | 🔴 CRITIQUE |
+| RES.3 | Gestion 401/403 : classe `AuthError` → bannière "Session expirée — Fermer et rouvrir le bot Telegram" | `api.ts` + `App.tsx` | 🔴 CRITIQUE |
+| RES.4 | `<ErrorBoundary>` par onglet : catch render errors → "Erreur inattendue — Recharger" + bouton retry | `App.tsx` + `ErrorBoundary.tsx` (nouveau) | 🔴 CRITIQUE |
+| RES.5 | Bannière API inaccessible : 3 échecs consécutifs `/admin/status` → sticky top banner avec last-seen | `App.tsx` + contexte | 🟡 HAUTE |
+| RES.6 | Offline detection : `useOnlineStatus()` → bannière "Hors ligne" + `SWRConfig isPaused` quand offline | `hooks/useOnlineStatus.ts` (nouveau) | 🟡 HAUTE |
+| RES.7 | Error states SWR dans l'UI : chaque page affiche `<ErrorCard message retry>` si `error && !data` | Toutes les pages | 🟡 HAUTE |
+| RES.8 | Loading skeletons Overview + Risk : `animate-pulse` placeholder pendant chargement initial | `Overview.tsx`, `Risk.tsx` | 🟢 NORMALE |
+| RES.9 | Indicateur données périmées : "⚠ {X}s" à côté de `HeartbeatDot` si dernière synchro > 60s | `Overview.tsx` | 🟢 NORMALE |
+
+### Questions à soumettre aux 3 LLMs (Étape 3 du protocole)
+
+```
+Root cause : mini-app React sans error handling systématique — 7 failles identifiées.
+
+Fix proposé RES.1 — Timeout request() :
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), path === '/admin/analyze' ? 30_000 : 10_000);
+  fetch(..., { signal: controller.signal }).finally(() => clearTimeout(timeoutId))
+
+Fix proposé RES.2 — SWRConfig :
+  <SWRConfig value={{ errorRetryCount: 3, errorRetryInterval: 2000, keepPreviousData: true, dedupingInterval: 2000 }}>
+
+Fix proposé RES.3 — AuthError :
+  if (response.status === 401 || response.status === 403) throw new AuthError('Session expirée');
+  // App.tsx : catch AuthError dans SWR onError → setAuthExpired(true) → bannière sticky
+
+Fix proposé RES.4 — ErrorBoundary :
+  class ErrorBoundary extends React.Component { componentDidCatch ... }
+  // Wrap chaque <TabsContent> avec key={tabValue} pour reset auto au changement d'onglet
+
+Questions (3 max) :
+1. RES.1 : `AbortController` partagé ou créé dans chaque appel ? Risque de race condition si SWR revalide avant que le précédent soit annulé ?
+2. RES.3 : SWR `onError` global dans SWRConfig ou hook `useEffect` sur `error` dans chaque composant ? Lequel est le plus propre pour détecter AuthError à travers tous les hooks ?
+3. RES.4 : `key={activeTab}` sur ErrorBoundary suffit-il pour reset l'état après changement d'onglet, ou faut-il un getDerivedStateFromError + resetErrorBoundary explicite ?
+
+Répondre : ✅ OK / ⚠️ problème + correction
+```
+
+### Ordre d'implémentation (4 sessions max)
+
+```
+Session 1 : RES.1 + RES.2 + RES.3 — api.ts + main.tsx (atomique, peu risqué)
+Session 2 : RES.4 — ErrorBoundary.tsx + wrap App.tsx (composant isolé)
+Session 3 : RES.5 + RES.6 + RES.7 — banners + error states dans chaque page
+Session 4 : RES.8 + RES.9 — polish (skeletons + stale indicator)
+```
+
+---
+
 ## P10 — PerpEdge Terminal (SaaS Public Dashboard)
 > Spec par consensus 3 LLMs (ChatGPT + Gemini + DeepSeek) — validée utilisateur 2026-05-15.
 > **Niche** : Perpetual Futures Decision Intelligence — gap entre data brute (Coinglass) et exécution (3Commas).
@@ -723,11 +794,11 @@ Voir tableau P8-E ci-dessus (P8E.1 à P8E.6).
 
 | ID | Événement | Détail du message Telegram | Statut |
 |---|---|---|---|
-| PN.1 | TP1 touché (50% fermé) | `🎯 TP1 {symbol} {side}` — 50% fermé @{price}, trailing activé, SL → breakeven {be_price}, PnL partiel {pnl} USDT | `[ ]` |
-| PN.2 | SL touché (perte) | `🔴 SL {symbol} {side}` — Position clôturée @{price}, PnL final {pnl} USDT, raison : SL_HIT | `[ ]` |
-| PN.3 | TP2 / Trailing stop exécuté (gain) | `✅ TP2 {symbol} {side}` — Position clôturée @{price}, PnL final {pnl} USDT, raison : TRAILING_STOP | `[ ]` |
-| PN.4 | Early exit déclenché | `⚡ EXIT ANTICIPE {symbol} {side}` — Score early_exit={score}/9, raison : {reason}, PnL {pnl} USDT | `[ ]` |
-| PN.5 | Breakeven activé | `🛡️ BREAKEVEN {symbol} {side}` — SL déplacé à {be_price} (entrée ±frais), risque annulé | `[ ]` |
+| PN.1 | TP1 touché (50% fermé) | `🎯 TP1 {symbol}` — PnL partiel brut, trailing activé, SL → breakeven | `[✓]` commit b2989e3 |
+| PN.2 | SL touché (perte) | `🔴 Stop Loss {symbol}` — clôturé @{price}, PnL final | `[✓]` commit b2989e3 |
+| PN.3 | TP2 / Trailing stop exécuté (gain) | `✅ TP2 / Trailing {symbol}` — clôturé @{price}, PnL final | `[✓]` commit b2989e3 |
+| PN.4 | Early exit déclenché | `⚡ Early Exit {symbol}` — score/THRESHOLD pts, signaux, PnL | `[✓]` commit b2989e3 |
+| PN.5 | Breakeven activé | Intégré dans PN.1 — consensus 3 LLMs (anti-spam, ordering async) | `[✓]` commit b2989e3 |
 
 > **Prérequis :** passer en revue `position-manager.js` avec 4 LLMs avant implémentation — identifer les hooks exacts (après `cancelAllAlgoOrders`, après `recordClose`, etc.)
 
