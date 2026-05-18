@@ -465,6 +465,42 @@ SSH_KEY=~/.ssh/id_rsa   # optionnel si clé par défaut
 
 ---
 
+## 🔴 P-TEST-COVERAGE — Couverture de tests 100% backend (intégration, vraies données)
+> Priorité haute · Multi-LLM requis (architecture + choix framework) · Pas de mocks — testnet Binance réel.
+> Objectif : certifier que chaque fonction/module du bot fonctionne sans erreur + rapport de couverture.
+
+### Stack retenu (à valider 3 LLMs)
+- **Vitest** — ESM natif, coverage V8, rapport HTML, watch mode
+- **Tests d'intégration** contre Binance testnet (vraies réponses API)
+- **Seuil bloquant** : 80% minimum · cible 100% logique métier
+- **LLM_MODE=claude** pour les tests impliquant le validator
+
+### Modules à couvrir
+
+| ID | Module | Tests prioritaires | Statut |
+|---|---|---|---|
+| TC.1 | `src/scorer.js` | Score correct par combinaison d'indicateurs, gates bloquantes, contrarian flag | `[ ]` |
+| TC.2 | `src/injector.js` | Gate #9 taker re-check, computeLevels SL/TP/BE corrects, R:R filter | `[ ]` |
+| TC.3 | `src/order-executor.js` | LIMIT order testnet, cancel auto 3min, dynamic sizing, guard double-position | `[ ]` |
+| TC.4 | `src/position-manager.js` | TP1 → breakeven, trailing stop, SL hit, early exit, lifecycle complet | `[ ]` |
+| TC.5 | `src/admin-api.js` | Tous les endpoints (status, positions, symbols, analyze, commands, network, risk) | `[ ]` |
+| TC.6 | `src/llm-validator.js` | APPROVE/REJECT/PENDING sur signaux réels, fallback claude si chrome_locked | `[ ]` |
+| TC.7 | `src/scalp-scanner.js` + `scalp-scorer.js` + `scalp-manager.js` | Pipeline scalp complet | `[ ]` |
+| TC.8 | `src/smart-money-scanner.js` + `spot-dca-manager.js` | Détection setup + tranches DCA | `[ ]` |
+| TC.9 | Watchers (OI, squeeze, capitulation, crowded-unwind) | Détection signal + format message | `[ ]` |
+
+### Tâches
+
+| ID | Tâche | Statut |
+|---|---|---|
+| TC.0 | Valider architecture 3 LLMs : Vitest config ESM + stratégie intégration testnet + structure dossier `tests/` | `[ ]` |
+| TC.A | Setup Vitest : `vitest.config.js`, coverage V8, script `npm test`, rapport HTML dans `coverage/` | `[ ]` |
+| TC.B | Écrire tests TC.1 → TC.9 (ordre : logique métier d'abord, API ensuite) | `[ ]` |
+| TC.C | Générer rapport coverage HTML + résumé terminal | `[ ]` |
+| TC.D | Ajouter seuil bloquant 80% dans CI (ou hook pre-push) | `[ ]` |
+
+---
+
 ## P-WEBAPP-RESILIENCE — Robustesse et résilience de la Mini-App React
 > Spec établie 2026-05-18 après audit complet du code (`api.ts`, `App.tsx`, `Overview.tsx`).
 > **Multi-LLM requis avant implémentation.** Questions précises définies ci-dessous.
