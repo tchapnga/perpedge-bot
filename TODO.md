@@ -262,8 +262,8 @@
 |---|---|---|---|
 | P8F.1 | Choisir hébergement HTTPS mini-app | Option A : nginx + Let's Encrypt sur VPS (sous-domaine ex: `app.perpedge.yourdomain.com`) · Option B : Cloudflare Pages / Vercel (gratuit, auto-HTTPS, push git) | `[ ]` |
 | P8F.2 | Build mini-app et déployer | `npm run build` → copier `dist/` sur le serveur choisi | `[ ]` |
-| P8F.3 | Configurer BotFather | `/setmenubutton` sur le bot → URL HTTPS de la mini-app · OU laisser le bouton inline WebApp (déjà codé) | `[ ]` |
-| P8F.4 | Mettre `MINI_APP_URL=https://...` dans `.env` VPS | Le bouton "Ouvrir Cockpit" s'active automatiquement dès que la variable est définie | `[ ]` |
+| P8F.3 | Configurer BotFather | `/setmenubutton` sur le bot → URL HTTPS de la mini-app · OU laisser le bouton inline WebApp (déjà codé) | `[✓]` 2026-05-18 |
+| P8F.4 | Mettre `MINI_APP_URL=https://...` dans `.env` VPS | Le bouton "Ouvrir Cockpit" s'active automatiquement dès que la variable est définie | `[✓]` déjà présent |
 | P8F.5 | Vérifier CORS sur admin-api.js | L'admin API (:3002) doit accepter les requêtes depuis l'origine HTTPS de la mini-app (`Access-Control-Allow-Origin`) | `[ ]` |
 | P8F.6 | Test end-to-end dans Telegram | Ouvrir le cockpit depuis Telegram mobile · Vérifier auth initData · Vérifier chaque onglet avec données réelles | `[ ]` |
 
