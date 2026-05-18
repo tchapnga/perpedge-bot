@@ -564,6 +564,23 @@ Session 4 : RES.8 + RES.9 — polish (skeletons + stale indicator)
 
 ---
 
+## P-LOG-INFRA — Industrialisation des logs (structuration + persistance + export)
+> Priorité : après P-MODULE-STATS · Multi-LLM requis.
+> Objectif : logs structurés JSON, persistance des warn/error, filtres + export CSV dans la mini-app.
+
+### Tâches
+
+| ID | Tâche | Fichier | Statut |
+|---|---|---|---|
+| LI.1 | Valider architecture 3 LLMs : wrapper `log(level, module, event, data?)` → remplace tous les `console.*` | — | `[ ]` |
+| LI.2 | Implémenter `src/logger.js` — wrapper structuré `{ts, level, module, event, symbol?, data?}` + ring buffer + interception console | `src/logger.js` | `[ ]` |
+| LI.3 | Persistance `warn_error.jsonl` — écriture fichier pour level `warn`/`error` uniquement (survie aux restarts) | `src/logger.js` | `[ ]` |
+| LI.4 | Instrumenter les modules principaux (remplacer console.log/error/warn par `log()`) | Tous les modules | `[ ]` |
+| LI.5 | Endpoint `GET /admin/logs` : ajouter filtres `?level=warn&module=scanner&since=` | `src/admin-api.js` | `[ ]` |
+| LI.6 | Mini-app Logs : filtres level/module + sélecteur période + bouton export CSV (inclut warn_error.jsonl) | `mini-app/src/pages/Logs.tsx` | `[ ]` |
+
+---
+
 ## P10 — PerpEdge Terminal (SaaS Public Dashboard)
 > Spec par consensus 3 LLMs (ChatGPT + Gemini + DeepSeek) — validée utilisateur 2026-05-15.
 > **Niche** : Perpetual Futures Decision Intelligence — gap entre data brute (Coinglass) et exécution (3Commas).
