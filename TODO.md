@@ -234,7 +234,7 @@
 |---|---|---|
 | P8C.1 | `GET /admin/status` — état bot complet (positions, PnL, cycle, health) | `[✓]` implémenté dans P8-A |
 | P8C.2 | `GET /admin/positions` — positions trackées + PnL non réalisé | `[✓]` implémenté dans P8-A |
-| P8C.3 | `GET /admin/symbols?q=` — autocomplete tokens Binance Futures (fuzzy) | `[→]` implémenté · optimisation en cours (cache + tri pertinence + suppression limite 20) |
+| P8C.3 | `GET /admin/symbols?q=` — autocomplete tokens Binance Futures (fuzzy) | `[✓]` commit df87fce — cache 1h, anti-race, score pertinence, filter TRADING, limit 20 |
 | P8C.4 | `POST /admin/analyze` — analyse manuelle d'un token (TA + dérivés + LLM) + timeout 30s | `[✓]` implémenté dans P8-A |
 | P8C.5 | `POST /admin/commands` — PAUSE / RESUME / EMERGENCY_STOP / RESET_EMERGENCY | `[✓]` implémenté dans P8-A |
 | P8C.6 | `GET /admin/signals` — historique signaux récents (50 derniers) | `[✓]` implémenté dans P8-A |
@@ -655,7 +655,7 @@ Session 4 : RES.8 + RES.9 — polish (skeletons + stale indicator)
 - [✓] admin-api.js : GET /admin/equity + GET /admin/risk + GET /admin/logs + ring buffer 500 logs (interception console.*)
 - [✓] Build TypeScript propre (250 KB / 81 KB gzip)
 - [✓] Règle mémorisée : zéro mock, zéro workaround — si endpoint manquant → backlog + nettoyage
-- [→] P8C.3 optimisation symbols : en attente réponse 3 LLMs (Playwright MCP déconnecté, relance en cours)
+- [✓] P8C.3 optimisation symbols : validé 3 LLMs (ChatGPT/DeepSeek/Gemini) · commit df87fce — filter TRADING, log errors, limit 20
 
 ### 2026-05-15 (session 1)
 - [✓] TODO.md créé dans le projet
@@ -731,15 +731,14 @@ pm2 reload perpedge-bot --update-env
 
 ---
 
-### 🟡 P8C.3 — Optimisation endpoint `/admin/symbols`
-> En cours · En attente réponse 3 LLMs (ChatGPT + DeepSeek + Gemini) · Playwright MCP à relancer
+### [✓] P8C.3 — Optimisation endpoint `/admin/symbols` — commit df87fce
+> Validé 3 LLMs (ChatGPT/DeepSeek/Gemini) · 2026-05-18
 
-**Problème identifié :** `exchangeInfo` (~300 paires, ~80 KB) refetchée à chaque frappe, `.slice(0, 20)` arbitraire, pas de tri par pertinence.
-
-**Question soumise aux LLMs :**
-> Optimiser GET /admin/symbols : cache exchangeInfo, supprimer limite 20, trier exact match en premier. Sans dépendance npm. Même format `{ symbols: string[] }`.
-
-**Après réponse LLMs :** DeepSeek+Claude reviewent → consensus → implémentation dans `src/admin-api.js`.
+- Cache `exchangeInfo` 1h TTL avec anti-race condition (`_symFetch` singleton)
+- Filtre `contractType === 'PERPETUAL' && status === 'TRADING'` (évite contrats suspendus)
+- Score pertinence : exact/+USDT=0, startsWith=1, includes=2
+- Log `console.error` sur échec fetch (observabilité)
+- Limite `.slice(0, 20)` — consensus 2/3 LLMs (Gemini+DeepSeek)
 
 ---
 
