@@ -286,18 +286,19 @@ function ConfigPage(): JSX.Element {
                   )}
                 </div>
 
-                {/* Toggle — full row is visually unified via border/bg color above */}
+                {/* Toggle — overflow-hidden clips thumb, left-0.5 anchors it */}
                 <button
                   onClick={() => handleToggle(name, !enabled)}
                   disabled={isSaving}
                   aria-checked={enabled}
                   role="switch"
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus:outline-none ${
+                  className={`relative h-6 w-11 shrink-0 rounded-full overflow-hidden transition-colors duration-200 focus:outline-none disabled:opacity-50 ${
                     enabled ? (meta?.track ?? "bg-emerald-600") : "bg-zinc-700"
                   }`}
                 >
-                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
-                    enabled ? "translate-x-5" : "translate-x-0.5"
+                  {/* left-0.5 = 2px anchor; ON: +20px = right gap 2px; OFF: translate-x-0 stays at 2px */}
+                  <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform duration-200 ${
+                    enabled ? "translate-x-5" : "translate-x-0"
                   }`} />
                 </button>
               </div>
