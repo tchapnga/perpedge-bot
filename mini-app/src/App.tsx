@@ -100,13 +100,15 @@ const PROFILE_OPTIONS: { value: TradeProfile; label: string; desc: string }[] = 
   { value: "aggressive",   label: "🔥 Agressif",     desc: "Perp + Spot en simultané (0.5× chacun)" },
 ];
 
-const MODULE_META: Record<string, { dot: string; track: string; desc: string }> = {
-  scalp:         { dot: "bg-orange-400",  track: "bg-orange-600",  desc: "Entrées rapides sub-1h" },
-  capitulation:  { dot: "bg-red-400",     track: "bg-red-600",     desc: "Capitulation du marché" },
-  smartMoney:    { dot: "bg-violet-400",  track: "bg-violet-600",  desc: "Flux smart money & CVD" },
-  oi:            { dot: "bg-sky-400",     track: "bg-sky-600",     desc: "Open Interest & funding" },
-  squeeze:       { dot: "bg-amber-400",   track: "bg-amber-600",   desc: "Détection de squeeze" },
-  crowdedUnwind: { dot: "bg-emerald-400", track: "bg-emerald-600", desc: "Débouclage de positions" },
+const MODULE_META: Record<string, {
+  accent: string; track: string; border: string; bg: string; desc: string;
+}> = {
+  scalp:         { accent: "bg-orange-500",  track: "bg-orange-600",  border: "border-orange-900/50",  bg: "bg-orange-950/15",  desc: "Entrées rapides sub-1h"  },
+  capitulation:  { accent: "bg-red-500",     track: "bg-red-600",     border: "border-red-900/50",     bg: "bg-red-950/15",     desc: "Capitulation du marché"  },
+  smartMoney:    { accent: "bg-violet-500",  track: "bg-violet-600",  border: "border-violet-900/50",  bg: "bg-violet-950/15",  desc: "Flux smart money & CVD"  },
+  oi:            { accent: "bg-sky-500",     track: "bg-sky-600",     border: "border-sky-900/50",     bg: "bg-sky-950/15",     desc: "Open Interest & funding" },
+  squeeze:       { accent: "bg-amber-500",   track: "bg-amber-600",   border: "border-amber-900/50",   bg: "bg-amber-950/15",   desc: "Détection de squeeze"    },
+  crowdedUnwind: { accent: "bg-emerald-500", track: "bg-emerald-600", border: "border-emerald-900/50", bg: "bg-emerald-950/15", desc: "Débouclage de positions" },
 };
 
 function ConfigPage(): JSX.Element {
@@ -262,20 +264,29 @@ function ConfigPage(): JSX.Element {
           Object.entries(modules).map(([name, enabled]) => {
             const meta = MODULE_META[name];
             return (
-              <div key={name} className={`flex items-center gap-3 rounded-xl border px-3 py-3 transition-colors ${
-                enabled
-                  ? "border-white/[0.08] bg-white/[0.03]"
-                  : "border-white/[0.04] bg-transparent opacity-60"
-              }`}>
-                {/* Color dot */}
-                <span className={`h-2 w-2 shrink-0 rounded-full ${meta?.dot ?? "bg-zinc-500"} ${enabled ? "" : "opacity-40"}`} />
+              <div
+                key={name}
+                className={`relative overflow-hidden flex items-center gap-3 rounded-xl border pl-4 pr-3 py-3 transition-all ${
+                  enabled && meta
+                    ? `${meta.border} ${meta.bg}`
+                    : enabled
+                    ? "border-white/[0.08] bg-white/[0.04]"
+                    : "border-white/[0.04] bg-transparent opacity-50"
+                }`}
+              >
+                {/* Left accent bar — visible only when ON */}
+                {enabled && (
+                  <div className={`absolute left-0 top-0 bottom-0 w-[3px] rounded-l-xl ${meta?.accent ?? "bg-emerald-500"}`} />
+                )}
+
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold capitalize">{name}</div>
                   {meta?.desc && (
-                    <div className="text-[11px] text-muted-foreground/70 truncate">{meta.desc}</div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground/60 truncate">{meta.desc}</div>
                   )}
                 </div>
-                {/* Toggle switch */}
+
+                {/* Toggle — full row is visually unified via border/bg color above */}
                 <button
                   onClick={() => handleToggle(name, !enabled)}
                   disabled={isSaving}
@@ -285,7 +296,9 @@ function ConfigPage(): JSX.Element {
                     enabled ? (meta?.track ?? "bg-emerald-600") : "bg-zinc-700"
                   }`}
                 >
-                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${enabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
+                    enabled ? "translate-x-5" : "translate-x-0.5"
+                  }`} />
                 </button>
               </div>
             );
