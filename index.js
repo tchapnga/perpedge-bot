@@ -39,6 +39,13 @@ import { startTelegramBot, stopTelegramBot, injectBotDeps } from './src/telegram
 import { startDailyReporter }              from './src/daily-reporter.js';
 import { recordCycle, recordSignal, recordTrade, isEntryPaused, isPausedAll, isEmergencyStopped, getMode } from './src/bot-state.js';
 
+// Préfixe [MAINNET]/[TESTNET] sur chaque ligne — filtrable via grep
+const _NET = process.env.BINANCE_TESTNET === 'true' ? '[TESTNET]' : '[MAINNET]';
+{ const { log, error, warn } = console;
+  console.log   = (...a) => log(_NET, ...a);
+  console.error = (...a) => error(_NET, ...a);
+  console.warn  = (...a) => warn(_NET, ...a); }
+
 async function runCycle() {
   if (isEmergencyStopped() || isPausedAll()) {
     console.log('[cycle] PAUSED ALL — cycle ignoré.');
