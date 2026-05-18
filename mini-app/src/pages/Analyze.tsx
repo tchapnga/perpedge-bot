@@ -7,7 +7,6 @@ import {
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMyRole } from "@/hooks/useMyRole";
@@ -72,7 +71,7 @@ function precStr(p: number): string {
 function ScoreBar({ value, max, cls }: { value: number; max: number; cls: string }) {
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-muted/30">
+    <div className="h-2 w-full overflow-hidden rounded-full bg-white/[0.08]">
       <div className={`h-full rounded-full transition-all ${cls}`} style={{ width: `${pct}%` }} />
     </div>
   );
@@ -104,22 +103,16 @@ function PriceLevelChart({ entry, sl, tp, side }: { entry: number; sl: number; t
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-28 w-full" preserveAspectRatio="xMidYMid meet">
-      {/* Profit zone */}
       <rect x={0} y={profitTop} width={LX - 6} height={profitH}
         fill={isLong ? "#22c55e18" : "#ef444418"} />
-      {/* Loss zone */}
       <rect x={0} y={lossTop} width={LX - 6} height={lossH}
         fill={isLong ? "#ef444418" : "#22c55e18"} />
-      {/* TP */}
       <line x1={0} x2={LX - 6} y1={yTp} y2={yTp}
         stroke="#22c55e" strokeWidth={1.5} strokeDasharray="5 3" />
-      {/* Entry */}
       <line x1={0} x2={LX - 6} y1={yEntry} y2={yEntry}
         stroke="#cbd5e1" strokeWidth={1.5} />
-      {/* SL */}
       <line x1={0} x2={LX - 6} y1={ySl} y2={ySl}
         stroke="#ef4444" strokeWidth={1.5} strokeDasharray="5 3" />
-      {/* Labels */}
       <text x={LX} y={yTp}    dominantBaseline="middle" fill="#22c55e" fontSize={8} fontFamily="monospace">
         TP {fmtPrice(tp)} +{tpPct}%
       </text>
@@ -129,7 +122,6 @@ function PriceLevelChart({ entry, sl, tp, side }: { entry: number; sl: number; t
       <text x={LX} y={ySl}    dominantBaseline="middle" fill="#ef4444" fontSize={8} fontFamily="monospace">
         SL {fmtPrice(sl)} -{slPct}%
       </text>
-      {/* R:R badge */}
       <rect x={W - 52} y={H / 2 - 11} width={50} height={22} rx={5}
         fill="#1e293b" stroke="#334155" strokeWidth={1} />
       <text x={W - 27} y={H / 2 + 5} dominantBaseline="middle" textAnchor="middle"
@@ -171,12 +163,10 @@ export default function Analyze(): JSX.Element {
   const runAnalysis = async () => {
     if (!sym) return;
     let finalSym = sym;
-    // 1. Try suggestions first (already loaded via SWR)
     if (suggestions && suggestions.length > 0 && !suggestions.includes(sym)) {
       const usdt = suggestions.find(s => s === sym + "USDT");
       finalSym = usdt ?? suggestions[0] ?? sym;
     }
-    // 2. Fallback: if still no known quote suffix, append USDT
     if (finalSym === sym && !QUOTE_SUFFIXES.some(q => sym.endsWith(q))) {
       finalSym = sym + "USDT";
     }
@@ -189,7 +179,6 @@ export default function Analyze(): JSX.Element {
       if (e instanceof DOMException && e.name === "AbortError") {
         setErr("Timeout — l'analyse a dépassé 30 secondes.");
       } else if (e instanceof Error) {
-        // Strip technical API prefix — find the payload after the em dash
         const dashIdx = e.message.indexOf(" — ");
         const raw = dashIdx >= 0 ? e.message.slice(dashIdx + 3) : e.message;
         try { setErr(JSON.parse(raw).error ?? raw); } catch { setErr(raw); }
@@ -225,7 +214,6 @@ export default function Analyze(): JSX.Element {
   const suggestion: SuggestedTrade | null = result?.llm?.suggested_trade ?? null;
   const isContrarian = result?.llm?.decision === "CONTRARIAN_FLIP";
 
-  // Reset suggestion tracking + pre-fill side when result changes
   useEffect(() => {
     setApplied(false);
     setDrift(false);
@@ -235,7 +223,6 @@ export default function Analyze(): JSX.Element {
     if (result.signal && result.signal !== "NO_TRADE" && !result.llm?.suggested_trade) {
       setSide(result.signal as "LONG" | "SHORT");
     } else if (result.signal === "NO_TRADE") {
-      // Infer direction from TA badges: count positive vs negative contributions
       const det = result.result as ResultDetail | undefined;
       const tags = Array.isArray(det?.ta_detail) ? (det.ta_detail as string[]) : [];
       const pos = tags.filter(d => d.startsWith("+")).length;
@@ -245,10 +232,9 @@ export default function Analyze(): JSX.Element {
     }
   }, [result]);
 
-  // Fetch live price when switching to manual tab OR when a new result arrives (to trigger suggestion)
   useEffect(() => {
     if (activeTab !== "manual" || !sym) return;
-    setEntry(""); // clear first so effect re-fires even if price is the same
+    setEntry("");
     let dead = false;
     (async () => {
       try {
@@ -260,12 +246,11 @@ export default function Analyze(): JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, sym, result]);
 
-  // Default SL/TP fallback (-1%/+2%) when no LLM suggestion but result exists
   useEffect(() => {
     if (activeTab !== "manual" || suggestion || !result) return;
     const livePrice = parseFloat(entryPrice);
     if (!Number.isFinite(livePrice) || livePrice <= 0) return;
-    if (slPrice || tpPrice) return; // don't override user's manual input
+    if (slPrice || tpPrice) return;
     const p = parseInt(precStr(livePrice));
     setSl(manualSide === "LONG"
       ? (livePrice * 0.99).toFixed(p)
@@ -276,7 +261,6 @@ export default function Analyze(): JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, suggestion, entryPrice, result, manualSide]);
 
-  // Apply LLM suggestion once entry price is loaded
   useEffect(() => {
     if (activeTab !== "manual" || !suggestion || suggestionApplied) return;
     const livePrice = parseFloat(entryPrice);
@@ -291,7 +275,7 @@ export default function Analyze(): JSX.Element {
       if (drift > 0.005) {
         setDrift(true);
         setApplied(true);
-        return; // side/lev/note applied but SL/TP skipped — price moved too much
+        return;
       }
     }
 
@@ -329,7 +313,6 @@ export default function Analyze(): JSX.Element {
   const canSubmit = isOperator && ok_e && ok_sl && ok_tp && slTpOk
     && Number.isFinite(lev) && lev >= 1 && size > 0 && !submitting;
 
-  // Quick SL/TP adjustment helpers
   const prec = ok_e ? precStr(entry) : "4";
   const adjSl = (pct: number) => {
     if (!ok_e) return;
@@ -363,9 +346,15 @@ export default function Analyze(): JSX.Element {
   return (
     <div className="space-y-4 px-4 py-5">
 
-      {/* ── Shared header ─────────────────────────────────────────────── */}
-      <h1 className="text-xl font-semibold">Analyse</h1>
+      {/* Header */}
+      <div>
+        <h1 className="text-xl font-bold tracking-tight">Analyse</h1>
+        <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Signal · Dérivés · Trade Manuel
+        </p>
+      </div>
 
+      {/* Search input */}
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
         <Input
@@ -382,11 +371,11 @@ export default function Analyze(): JSX.Element {
           autoComplete="off"
         />
         {showDrop && suggestions && suggestions.length > 0 && (
-          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-white/[0.10] bg-[#0d1117]/95 shadow-xl backdrop-blur-md">
             {suggestions.slice(0, 6).map((s) => (
               <button
                 key={s}
-                className="w-full px-4 py-2.5 text-left text-sm font-mono hover:bg-muted/60 active:bg-muted"
+                className="w-full px-4 py-2.5 text-left text-sm font-mono text-muted-foreground hover:bg-white/[0.06] hover:text-foreground transition-colors"
                 onMouseDown={(e) => { e.preventDefault(); selectSymbol(s); }}
               >
                 {s}
@@ -409,26 +398,44 @@ export default function Analyze(): JSX.Element {
         </div>
       )}
 
-      {/* ── Inner tabs ────────────────────────────────────────────────── */}
+      {/* Inner tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="w-full">
-          <TabsTrigger value="quant"  className="flex-1">Quantitatif</TabsTrigger>
-          <TabsTrigger value="manual" className="flex-1">Manuel</TabsTrigger>
+        <TabsList className="grid h-auto w-full grid-cols-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1">
+          <TabsTrigger
+            value="quant"
+            className="rounded-lg py-2 text-xs font-medium data-[state=active]:bg-white/[0.07] data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=inactive]:text-muted-foreground"
+          >
+            Quantitatif
+          </TabsTrigger>
+          <TabsTrigger
+            value="manual"
+            className="rounded-lg py-2 text-xs font-medium data-[state=active]:bg-white/[0.07] data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=inactive]:text-muted-foreground"
+          >
+            Manuel
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Tab: Quantitatif ───────────────────────────────────────── */}
         <TabsContent value="quant" className="mt-4 space-y-3">
           {!result && !analyzeError && (
-            <div className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-muted-foreground">
-              Entrez un symbole et cliquez sur Analyser.
+            <div className="rounded-xl border border-dashed border-white/[0.08] py-10 text-center">
+              <Search className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">Entrez un symbole et cliquez sur Analyser.</p>
             </div>
           )}
 
           {result && (
             <>
               {/* Verdict */}
-              <Card>
-                <CardContent className="pt-4 space-y-3">
+              <div className={`relative overflow-hidden rounded-xl border p-4 backdrop-blur-sm ${
+                result.signal === "LONG"
+                  ? "border-emerald-900/50 bg-emerald-950/10"
+                  : result.signal === "SHORT"
+                  ? "border-red-900/50 bg-red-950/10"
+                  : "border-white/[0.08] bg-white/[0.03]"
+              }`}>
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent" />
+                <div className="relative space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Badge
@@ -437,14 +444,14 @@ export default function Analyze(): JSX.Element {
                       >
                         {result.signal === "LONG" ? "▲ LONG" : result.signal === "SHORT" ? "▼ SHORT" : "— NO TRADE"}
                       </Badge>
-                      <span className="text-xl font-bold">{globalScore.toFixed(1)}</span>
+                      <span className="text-xl font-bold tabular-nums">{globalScore.toFixed(1)}</span>
                       <span className="text-xs text-muted-foreground">/10 · {globalScoreLabel(globalScore)}</span>
                     </div>
-                    <span className="text-xs font-mono text-muted-foreground">{result.symbol}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{result.symbol}</span>
                   </div>
                   <ScoreBar value={globalScore} max={10} cls={globalScoreColor(globalScore)} />
-                </CardContent>
-              </Card>
+                </div>
+              </div>
 
               {/* Gate / Veto */}
               {detail?.gate_block && (
@@ -459,65 +466,81 @@ export default function Analyze(): JSX.Element {
               )}
 
               {/* TA card */}
-              <Card>
-                <CardContent className="pt-4 space-y-2.5">
+              <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm">
+                <div className="absolute bottom-0 left-0 top-0 w-[3px] bg-emerald-500/70" />
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent" />
+                <div className="relative pl-3 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-sm font-medium">
                       <TrendingUp className="h-4 w-4 text-emerald-400" />
                       Analyse Technique
                     </div>
-                    <span className="text-sm font-bold text-emerald-400">{taScore.toFixed(1)}/5</span>
+                    <span className="text-sm font-bold tabular-nums text-emerald-400">{taScore.toFixed(1)}/5</span>
                   </div>
                   <ScoreBar value={taScore} max={5} cls="bg-emerald-500" />
                   {taDetail.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 pt-0.5">
                       {taDetail.map((d, i) => {
                         const label = d.length > 40 ? d.slice(0, 37) + "…" : d;
-                        return <Badge key={i} variant={pillVariant(d)} title={d} className="px-2 py-0.5 text-xs font-mono max-w-[200px] truncate">{label}</Badge>;
+                        return (
+                          <Badge key={i} variant={pillVariant(d)} title={d}
+                            className="max-w-[200px] truncate px-2 py-0.5 text-xs font-mono">
+                            {label}
+                          </Badge>
+                        );
                       })}
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              </div>
 
               {/* DER card */}
-              <Card>
-                <CardContent className="pt-4 space-y-2.5">
+              <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm">
+                <div className="absolute bottom-0 left-0 top-0 w-[3px] bg-sky-500/70" />
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent" />
+                <div className="relative pl-3 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-sm font-medium">
                       <TrendingDown className="h-4 w-4 text-sky-400" />
-                      Dérivés & Funding
+                      Dérivés &amp; Funding
                     </div>
-                    <span className="text-sm font-bold text-sky-400">{derScore.toFixed(1)}/5</span>
+                    <span className="text-sm font-bold tabular-nums text-sky-400">{derScore.toFixed(1)}/5</span>
                   </div>
                   <ScoreBar value={derScore} max={5} cls="bg-sky-500" />
                   {derDetail.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 pt-0.5">
                       {derDetail.map((d, i) => {
                         const label = d.length > 40 ? d.slice(0, 37) + "…" : d;
-                        return <Badge key={i} variant={pillVariant(d)} title={d} className="px-2 py-0.5 text-xs font-mono max-w-[200px] truncate">{label}</Badge>;
+                        return (
+                          <Badge key={i} variant={pillVariant(d)} title={d}
+                            className="max-w-[200px] truncate px-2 py-0.5 text-xs font-mono">
+                            {label}
+                          </Badge>
+                        );
                       })}
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              </div>
 
               {/* Rationale */}
-              <div className="rounded-xl border border-border bg-muted/20 px-3 py-2.5">
-                <div className="mb-1 text-xs font-medium text-muted-foreground">
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3">
+                <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                   Pourquoi {result.signal} ?
                 </div>
-                <p className="text-sm leading-5">
+                <p className="text-sm italic leading-5 text-foreground/80">
                   {buildRationale(result.signal, taScore, derScore, taDetail, derDetail)}
                 </p>
               </div>
 
               {/* LLM decision */}
               {result.llm ? (
-                <Card>
-                  <CardContent className="pt-4 space-y-2">
+                <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm">
+                  <div className="absolute bottom-0 left-0 top-0 w-[3px] bg-violet-500/70" />
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent" />
+                  <div className="relative pl-3 space-y-2">
                     <div className="flex items-center gap-2 text-sm font-medium">
-                      <Sparkles className="h-4 w-4 text-primary" />
+                      <Sparkles className="h-4 w-4 text-violet-400" />
                       Décision LLM
                     </div>
                     <Badge
@@ -533,9 +556,9 @@ export default function Analyze(): JSX.Element {
                       <p className="text-sm leading-5 text-muted-foreground">{result.llm.reasoning}</p>
                     )}
                     {result.llm.suggested_trade && (
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
-                        <Sparkles className="h-3 w-3 text-primary" />
-                        <span className="font-medium text-primary">Suggestion :</span>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-violet-500/20 bg-violet-950/20 px-3 py-2 text-xs">
+                        <Sparkles className="h-3 w-3 text-violet-400" />
+                        <span className="font-medium text-violet-300">Suggestion :</span>
                         <span className={result.llm.suggested_trade.side === "LONG" ? "text-emerald-400" : "text-red-400"}>
                           {result.llm.suggested_trade.side}
                         </span>
@@ -547,19 +570,19 @@ export default function Analyze(): JSX.Element {
                         <span>{result.llm.suggested_trade.leverage}x</span>
                         <button
                           onClick={() => setActiveTab("manual")}
-                          className="ml-auto text-primary underline underline-offset-2"
+                          className="ml-auto text-violet-300 underline underline-offset-2"
                         >
                           Voir Manuel →
                         </button>
                       </div>
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               ) : isBlocked ? (
-                <div className="rounded-xl border border-orange-900/50 bg-orange-950/20 px-3 py-2.5 space-y-1.5">
+                <div className="rounded-xl border border-orange-900/50 bg-orange-950/20 px-4 py-3 space-y-1.5">
                   <p className="text-xs font-medium text-orange-300">⛔ LLM non consulté</p>
                   {!detail?.gate_block && (
-                    <p className="text-xs text-muted-foreground leading-5">
+                    <p className="text-xs leading-5 text-muted-foreground">
                       {String(detail?.veto_reason ?? "Signal bloqué avant validation LLM.")}
                     </p>
                   )}
@@ -580,36 +603,39 @@ export default function Analyze(): JSX.Element {
 
           {/* SVG chart — visible only when SL/TP are valid */}
           {slTpOk && (
-            <Card>
-              <CardContent className="pt-3">
+            <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm">
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent" />
+              <div className="relative">
                 <PriceLevelChart entry={entry} sl={sl} tp={tp} side={manualSide} />
-                <div className="mt-2.5 grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="rounded-lg bg-red-950/30 px-2 py-1.5">
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="rounded-lg border border-red-900/40 bg-red-950/20 px-2 py-1.5">
                     <div className="text-muted-foreground">Stop Loss</div>
                     <div className="font-semibold text-red-300">-{slPct}%</div>
-                    {estLoss && <div className="text-muted-foreground/70">-{estLoss} $</div>}
+                    {estLoss && <div className="text-muted-foreground/60">-{estLoss} $</div>}
                   </div>
-                  <div className="rounded-lg bg-muted/20 px-2 py-1.5">
+                  <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1.5">
                     <div className="text-muted-foreground">R:R</div>
-                    <div className="font-bold text-primary">1:{rr}</div>
+                    <div className="font-bold text-foreground">1:{rr}</div>
                   </div>
-                  <div className="rounded-lg bg-emerald-950/30 px-2 py-1.5">
+                  <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/20 px-2 py-1.5">
                     <div className="text-muted-foreground">Take Profit</div>
                     <div className="font-semibold text-emerald-300">+{tpPct}%</div>
-                    {estGain && <div className="text-muted-foreground/70">+{estGain} $</div>}
+                    {estGain && <div className="text-muted-foreground/60">+{estGain} $</div>}
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           )}
 
           {/* Form card */}
-          <Card>
-            <CardContent className="pt-4 space-y-4">
+          <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent" />
+            <div className="relative space-y-4">
+
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">Trade manuel{sym ? ` — ${sym}` : ""}</span>
                 {suggestionApplied && !priceDriftWarning && (
-                  <Badge variant="secondary" className="gap-1 border-primary/30 bg-primary/10 text-primary text-[10px]">
+                  <Badge variant="secondary" className="gap-1 border-violet-500/30 bg-violet-950/20 text-violet-300 text-[10px]">
                     <Sparkles className="h-2.5 w-2.5" />Suggestion LLM
                   </Badge>
                 )}
@@ -625,20 +651,20 @@ export default function Analyze(): JSX.Element {
                 )}
               </div>
 
-              {/* Side */}
+              {/* Direction */}
               <div>
-                <div className="mb-1.5 text-xs text-muted-foreground">Direction</div>
+                <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Direction</div>
                 <div className="flex gap-2">
                   {(["LONG", "SHORT"] as const).map((s) => (
                     <button
                       key={s}
                       onClick={() => { setSide(s); setSl(""); setTp(""); }}
-                      className={`flex-1 rounded-lg border py-2.5 text-sm font-semibold transition-colors ${
+                      className={`flex-1 rounded-xl border py-3 text-sm font-bold transition-all ${
                         manualSide === s
                           ? s === "LONG"
-                            ? "border-emerald-600 bg-emerald-950/40 text-emerald-300"
-                            : "border-red-600 bg-red-950/40 text-red-300"
-                          : "border-border bg-muted/20 text-muted-foreground"
+                            ? "border-emerald-600/60 bg-emerald-950/30 text-emerald-300"
+                            : "border-red-600/60 bg-red-950/30 text-red-300"
+                          : "border-white/[0.06] bg-transparent text-muted-foreground hover:border-white/[0.12] hover:text-foreground"
                       }`}
                     >
                       {s === "LONG" ? "▲ LONG" : "▼ SHORT"}
@@ -693,7 +719,7 @@ export default function Analyze(): JSX.Element {
                   <div className="flex gap-1">
                     {[0.5, 1, 2].map((p) => (
                       <button key={p} onClick={() => adjSl(p)}
-                        className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-red-800/60 hover:text-red-300"
+                        className="rounded border border-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-red-800/60 hover:text-red-300"
                       >
                         -{p}%
                       </button>
@@ -715,7 +741,7 @@ export default function Analyze(): JSX.Element {
                   <div className="flex gap-1">
                     {[1, 2, 3].map((p) => (
                       <button key={p} onClick={() => adjTp(p)}
-                        className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-emerald-800/60 hover:text-emerald-300"
+                        className="rounded border border-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-emerald-800/60 hover:text-emerald-300"
                       >
                         +{p}%
                       </button>
@@ -746,13 +772,13 @@ export default function Analyze(): JSX.Element {
                     value={note} onChange={(e) => setNote(e.target.value)}
                     placeholder="Raison du trade, observations…"
                     rows={3}
-                    className="mt-2 w-full resize-none rounded-lg border border-border bg-muted/20 p-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="mt-2 w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.02] p-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-white/[0.15]"
                   />
                 )}
               </div>
 
-              {/* Info: bot management style */}
-              <p className="text-[11px] leading-4 text-muted-foreground/70">
+              {/* Info */}
+              <p className="text-[11px] leading-4 text-muted-foreground/60">
                 Le bot ferme 50% de la position au TP, puis gère le reste avec un trailing stop.
                 {!isOperator && " Rôle OPERATOR requis."}
               </p>
@@ -789,8 +815,8 @@ export default function Analyze(): JSX.Element {
                   : `Placer ${manualSide}${sym ? ` ${sym}` : ""}`}
               </Button>
 
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

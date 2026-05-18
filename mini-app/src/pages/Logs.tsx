@@ -1,14 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Activity, Trash2 } from "lucide-react";
 import { type LogEntry, getLogs } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
 
 type LogEntrySeq = LogEntry & { _seq: number };
 
-function levelClass(level: LogEntry["level"]): string {
-  if (level === "error") return "text-red-400";
-  if (level === "warn")  return "text-yellow-400";
-  return "text-gray-300";
+function levelTag(level: LogEntry["level"]): { tag: string; tagClass: string; rowClass: string; msgClass: string } {
+  if (level === "error") return {
+    tag: "ERR",
+    tagClass: "text-red-400",
+    rowClass: "bg-red-950/20 rounded px-1",
+    msgClass: "text-red-200",
+  };
+  if (level === "warn") return {
+    tag: "WRN",
+    tagClass: "text-amber-400",
+    rowClass: "bg-amber-950/15 rounded px-1",
+    msgClass: "text-amber-200",
+  };
+  return {
+    tag: "INF",
+    tagClass: "text-zinc-500",
+    rowClass: "",
+    msgClass: "text-zinc-400",
+  };
 }
 
 function fmtTime(ts: string): string {
@@ -73,19 +87,28 @@ export default function Logs(): JSX.Element {
 
   return (
     <div className="flex h-[calc(100dvh-4rem)] flex-col gap-3 px-4 py-5">
+      {/* Header */}
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Logs</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">Polling incrémental · 2 s</p>
+        <div className="flex items-center gap-2.5">
+          <Activity className="h-5 w-5 text-muted-foreground" />
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">Logs</h1>
+            <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              polling 2s · max 300 lignes
+            </p>
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
-          <Badge variant={errorCount > 0 ? "destructive" : "secondary"}>
-            {errorCount} err
-          </Badge>
+          {errorCount > 0 && (
+            <span className="rounded-full border border-red-700/60 bg-red-950/40 px-2 py-0.5 text-[11px] font-bold text-red-300">
+              {errorCount} err
+            </span>
+          )}
           <button
             type="button"
             onClick={() => { setLogs([]); sinceRef.current = new Date().toISOString(); }}
-            className="rounded-xl border border-border bg-card p-2 text-muted-foreground hover:text-foreground"
+            className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-2 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
             aria-label="Effacer l'affichage des logs"
             title="Efface uniquement l'affichage local"
           >
@@ -94,15 +117,17 @@ export default function Logs(): JSX.Element {
         </div>
       </div>
 
+      {/* API error banner */}
       {apiError ? (
-        <div className="rounded-xl border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+        <div className="rounded-xl border border-red-900/60 bg-red-950/20 px-3 py-2 text-xs text-red-300">
           {apiError}
         </div>
       ) : null}
 
+      {/* Terminal container */}
       <div
         ref={containerRef}
-        className="no-scrollbar flex-1 overflow-y-auto rounded-2xl border border-border bg-black px-3 py-3 font-mono text-xs leading-relaxed"
+        className="no-scrollbar flex-1 overflow-y-auto rounded-xl border border-zinc-800/60 bg-zinc-950/90 px-2 py-2 font-mono text-[11px] leading-5 backdrop-blur-sm"
         role="log"
         aria-live="polite"
         aria-label="Logs système"
@@ -110,15 +135,19 @@ export default function Logs(): JSX.Element {
         {logs.length === 0 ? (
           <span className="text-muted-foreground">En attente de logs…</span>
         ) : (
-          logs.map(log => (
-            <div key={log._seq} className="flex gap-1.5 whitespace-pre-wrap break-words py-0.5">
-              <span className="shrink-0 text-muted-foreground">[{fmtTime(log.ts)}]</span>
-              <span className={`shrink-0 font-semibold ${levelClass(log.level)}`}>
-                {log.level.toUpperCase()}
-              </span>
-              <span className="text-gray-300">{log.msg}</span>
-            </div>
-          ))
+          logs.map(log => {
+            const { tag, tagClass, rowClass, msgClass } = levelTag(log.level);
+            return (
+              <div
+                key={log._seq}
+                className={`flex gap-1.5 whitespace-pre-wrap break-words py-0.5 ${rowClass}`}
+              >
+                <span className="shrink-0 text-zinc-600">[{fmtTime(log.ts)}]</span>
+                <span className={`shrink-0 font-bold tracking-wider ${tagClass}`}>{tag}</span>
+                <span className={msgClass}>{log.msg}</span>
+              </div>
+            );
+          })
         )}
       </div>
     </div>
