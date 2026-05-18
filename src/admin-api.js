@@ -252,13 +252,13 @@ async function _loadSymbols() {
   const res = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo', { signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`exchangeInfo ${res.status}`);
   const body = await res.json();
-  _symCache = { ts: Date.now(), data: (body.symbols ?? []).filter(s => s.contractType === 'PERPETUAL').map(s => s.symbol) };
+  _symCache = { ts: Date.now(), data: (body.symbols ?? []).filter(s => s.contractType === 'PERPETUAL' && s.status === 'TRADING').map(s => s.symbol) };
   return _symCache.data;
 }
 
 function _getSymbols() {
   if (_symCache.data.length && Date.now() - _symCache.ts < SYM_TTL) return Promise.resolve(_symCache.data);
-  if (!_symFetch) _symFetch = _loadSymbols().catch(() => _symCache.data).finally(() => { _symFetch = null; });
+  if (!_symFetch) _symFetch = _loadSymbols().catch(err => { console.error('[symbols] exchangeInfo fetch failed:', err.message); return _symCache.data; }).finally(() => { _symFetch = null; });
   return _symFetch;
 }
 
@@ -328,7 +328,7 @@ export async function startAdminApi() {
       const hits = all
         .filter(s => s.includes(q))
         .sort((a, b) => _symbolScore(a, q) - _symbolScore(b, q) || a.localeCompare(b))
-        .slice(0, 50);
+        .slice(0, 20);
       return { symbols: hits };
     } catch { return { symbols: [] }; }
   });
