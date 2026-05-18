@@ -1,10 +1,11 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { NETWORK } from './utils/network.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR   = join(__dirname, '..', 'data');
-const STORE_PATH = join(DATA_DIR, 'positions.json');
+const STORE_PATH = join(DATA_DIR, `positions.${NETWORK}.json`);
 
 try { mkdirSync(DATA_DIR, { recursive: true }); } catch { /* already exists */ }
 

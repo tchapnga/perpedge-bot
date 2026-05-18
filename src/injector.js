@@ -2,8 +2,9 @@ import { appendFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import crypto from 'crypto';
 import { getPerpSnapshot } from './perp-client.js';
+import { NETWORK } from './utils/network.js';
 
-const QUEUE_PATH = process.env.QUEUE_PATH || './signals_queue.jsonl';
+const QUEUE_PATH = process.env.QUEUE_PATH || `./signals_queue.${NETWORK}.jsonl`;
 try { mkdirSync(dirname(QUEUE_PATH), { recursive: true }); } catch { /* already exists */ }
 
 export function computeLevels(result) {

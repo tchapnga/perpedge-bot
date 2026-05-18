@@ -1,7 +1,8 @@
 import { appendFile, readFile } from 'fs/promises';
 import { join } from 'path';
+import { NETWORK } from './utils/network.js';
 
-const JOURNAL_PATH = join(process.cwd(), 'trade_journal.jsonl');
+const JOURNAL_PATH = join(process.cwd(), `trade_journal.${NETWORK}.jsonl`);
 
 export async function logTrade(entry) {
   if (!entry?.symbol) return;

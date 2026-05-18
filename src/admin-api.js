@@ -6,6 +6,7 @@ import { config }       from './config.js';
 import { getBotState, setPauseLevel, setMode, setEmergencyStop, resetEmergencyStop, setModuleEnabled, getTradeProfile, setTradeProfile } from './bot-state.js';
 import { readAllTrades } from './trade-journal.js';
 import { reconcilePositions, forceClosePosition, bootReconcile } from './position-manager.js';
+import { NETWORK } from './utils/network.js';
 
 // ── Log ring buffer P8D.7 — interception console.* au niveau module ───────────
 const LOG_BUFFER = [];
@@ -64,7 +65,7 @@ function _escapeCsv(v) {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const PORT        = Number(process.env.ADMIN_API_PORT ?? 3002);
-const AUDIT_FILE  = 'admin_audit.jsonl';
+const AUDIT_FILE  = `admin_audit.${NETWORK}.jsonl`;
 const IS_PROD     = process.env.NODE_ENV === 'production';
 
 // Max age initData Telegram : 24h — convention standard mini-apps Telegram
