@@ -97,10 +97,11 @@ function buildInlineKeyboard(state) {
 }
 
 // ── État module-level pour retry polling + stop propre ────────────────────────
-let _bot             = null;
+let _bot              = null;
 let _pollingRetryTimer = null;
-let _isStopping      = false;
-let _currentDelay    = 5_000;
+let _isStopping       = false;
+let _isPollingActive  = false;  // true dès le début de bot.start(), reset sur erreur
+let _currentDelay     = 5_000;
 
 const _isTelegramConflict409 = (err) =>
   err?.error?.error_code === 409 ||
@@ -112,9 +113,15 @@ export async function stopTelegramBot() {
   _isStopping = true;
   console.log('[telegram-bot] Arrêt gracieux en cours...');
   if (_pollingRetryTimer) { clearTimeout(_pollingRetryTimer); _pollingRetryTimer = null; }
-  if (_bot) {
-    try { await _bot.stop(); console.log('[telegram-bot] Bot arrêté.'); }
-    catch (err) { console.error('[telegram-bot] bot.stop() error:', err.message); }
+  if (!_bot) return;
+  if (!_isPollingActive) {
+    console.log('[telegram-bot] Bot arrêté (polling non actif).');
+    return;
+  }
+  try { await _bot.stop(); console.log('[telegram-bot] Bot arrêté.'); }
+  catch (err) {
+    if (_isTelegramConflict409(err)) console.log('[telegram-bot] Bot arrêté (409 ignoré — autre instance active).');
+    else console.error('[telegram-bot] bot.stop() error:', err?.message ?? err);
   }
 }
 
@@ -494,12 +501,16 @@ export function startTelegramBot() {
   });
 
   // Polling avec retry backoff exponentiel sur 409
+  // _isPollingActive posé AVANT await (consensus Gemini+ChatGPT+DeepSeek 2026-05-18)
+  // car bot.start() ne résout que quand le bot s'arrête → flag après await serait toujours faux
   const _startPolling = async () => {
-    if (_isStopping) return;
+    if (_isStopping || _isPollingActive) return;
+    _isPollingActive = true;
     try {
       await bot.start({ drop_pending_updates: true });
       _currentDelay = 5_000;
     } catch (err) {
+      _isPollingActive = false;
       if (_isStopping) return;
       if (_isTelegramConflict409(err)) {
         console.warn(`[telegram-bot] 409 Conflict — retry dans ${_currentDelay / 1000}s (backoff)`);
