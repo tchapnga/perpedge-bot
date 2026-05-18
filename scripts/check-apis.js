@@ -159,10 +159,10 @@ try {
 }
 
 try {
-  const r = await get(`${mcpBase}/tools/get_perp_snapshot?symbol=BTCUSDT`, mcpHeaders);
-  result('MCP get_perp_snapshot BTCUSDT', r.statusCode === 200, `HTTP ${r.statusCode}`);
+  const r = await get(`${mcpBase}/api/perp-snapshot?symbol=BTCUSDT`, mcpHeaders);
+  result('MCP /api/perp-snapshot BTCUSDT', r.statusCode === 200, `HTTP ${r.statusCode}`);
 } catch (e) {
-  result('MCP get_perp_snapshot', false, e.message);
+  result('MCP /api/perp-snapshot', false, e.message);
 }
 
 // ── 5. Telegram ───────────────────────────────────────────────────────────────
