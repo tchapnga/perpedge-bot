@@ -13,18 +13,16 @@
 
 ---
 
-## ⚠️ REVUE MULTI-LLM EN ATTENTE — À faire avant mise en production live
+## ✅ REVUE MULTI-LLM COMPLÈTE — Session 2026-05-18
 
-> **Contexte :** Playwright MCP non disponible lors de la session 2026-05-16. Les fixes ci-dessous ont été codés par Claude seul avec revue interne. Ils doivent être soumis aux 4 LLMs avant toute utilisation en mode LIVE.
+> Tous les fichiers en attente de revue ont été traités. Aucune revue en suspens.
 >
-> **Fichiers à soumettre en revue :**
-> - `src/injector.js` — `computeLevels()` : guard S/R direction (SL invalide short/long)
-> - `src/scanner.js` — `SYMBOL_BLACKLIST` : blacklist STARUSDT HTTP 500
-> - `src/crash-notifier.js` + `index.js` — uncaughtException/unhandledRejection PM2 crash alerts (P9B.5)
-> - `src/telegram-bot.js` — retry 409 grammy (P-ROBUSTNESS, non encore codé)
-> - `src/llm-validator.js` — guard LLM_MODE linux (P-ROBUSTNESS, non encore codé)
+> **Fichiers traités cette session (2026-05-18) :**
+> - `src/telegram-bot.js` — fix 409 Conflict : `_isPollingActive` avant `await bot.start()`, stop silencieux — **consensus 3/3 LLMs, déployé VPS, validé logs** ✅
+> - `src/order-executor.js` + `src/position-manager.js` — guard no-double-position : `checkExistingPosition()` + `_symbolLocks` — **consensus 3/3 LLMs, déployé VPS** ✅
 >
-> **Procédure :** ouvrir Chrome → Playwright MCP → envoyer diff à ChatGPT+Gemini → DeepSeek+Claude review → consensus → merge
+> **Revue précédente (2026-05-18 début de session) :**
+> - `src/injector.js`, `src/scanner.js`, `src/crash-notifier.js`, `index.js`, `src/llm-validator.js`, `src/manual-trade.js` — **consensus 3/3, tous corrigés** ✅
 
 ---
 
@@ -615,9 +613,54 @@ SSH_KEY=~/.ssh/id_rsa   # optionnel si clé par défaut
 
 ---
 
-## PROCHAINE SESSION — À faire en priorité
+## PROCHAINE SESSION — Point de départ précis (2026-05-18)
 
-### [→] P8C.3 — Optimisation endpoint `/admin/symbols`
+> **Dernière session** : guard no-double-position + fix Telegram 409 livrés en prod. Commits `36f8a11` + `3f394e0`. VPS propre.
+> **Prochaine priorité** : P9-A (action utilisateur) + [VPS] + P-NOTIFY.
+
+---
+
+### 🔴 IMMÉDIAT — P9-A + .env VPS (bloqueur go-live)
+
+**Étape 1 — Utilisateur** : créer les clés API Binance prod sur binance.com
+- Clé Futures : permissions Futures Trading + lecture, **pas de retrait**, whitelist IP `83.228.242.106`
+- Clé Spot : permissions Spot Trading + lecture, **pas de retrait**, même whitelist
+
+**Étape 2 — Claude** (après réception des clés) :
+```bash
+ssh ubuntu@83.228.242.106
+# Ajouter dans .env VPS :
+BINANCE_TESTNET=false
+BINANCE_API_KEY=<futures_key>
+BINANCE_API_SECRET=<futures_secret>
+BINANCE_SPOT_API_KEY=<spot_key>
+BINANCE_SPOT_API_SECRET=<spot_secret>
+ENABLE_SPOT_LIVE_TRADING=false   # ← MANQUANT ACTUELLEMENT, ajouter maintenant
+pm2 reload perpedge-bot --update-env
+```
+
+**Étape 3 — Claude** : `node scripts/check-apis.js` (P9-C)
+
+**Étape 4** : 24h shadow mode `DRY_RUN=true` (P9-D)
+
+---
+
+### 🟡 EN PARALLÈLE — P-NOTIFY (lifecycle trades) `[ ]`
+
+> **Non commencé.** 5 événements à notifier via `bot.pushAlert()` dans `position-manager.js`.
+> **Protocole** : lire `position-manager.js` → formuler spec → 3 LLMs → code.
+
+| ID | Événement | Message attendu |
+|---|---|---|
+| PN.1 | TP1 touché (50% fermé) | `🎯 TP1 {symbol}` — 50% @{price}, trailing activé, SL→breakeven, PnL partiel |
+| PN.2 | SL touché | `🔴 SL {symbol}` — clôturé @{price}, PnL final |
+| PN.3 | TP2 / trailing stop | `✅ TP2 {symbol}` — clôturé @{price}, PnL final |
+| PN.4 | Early exit | `⚡ EXIT ANTICIPÉ {symbol}` — score early_exit/9, raison, PnL |
+| PN.5 | Breakeven activé | `🛡️ BREAKEVEN {symbol}` — SL déplacé à {be_price} |
+
+---
+
+### 🟡 P8C.3 — Optimisation endpoint `/admin/symbols`
 > En cours · En attente réponse 3 LLMs (ChatGPT + DeepSeek + Gemini) · Playwright MCP à relancer
 
 **Problème identifié :** `exchangeInfo` (~300 paires, ~80 KB) refetchée à chaque frappe, `.slice(0, 20)` arbitraire, pas de tri par pertinence.
